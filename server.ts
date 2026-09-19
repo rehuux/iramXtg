@@ -634,391 +634,62 @@ function getFallbackRecord(type: string, query: string): any {
   }
 }
 
-// ── RICH TELEGRAM RESPONSE FORMATTERS ──
+// ── RAW API JSON RESPONSE FORMATTERS ──
+function formatRawJsonResponse(data: any, query: string, type: string): string {
+  let payload = data;
+  if (!payload || (typeof payload === 'object' && Object.keys(payload).length === 0)) {
+    payload = getFallbackRecord(type, query) || {
+      success: false,
+      status: "not_found",
+      query,
+      message: "No records found in gateway registry",
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  let jsonStr = "";
+  try {
+    jsonStr = JSON.stringify(payload, null, 2);
+  } catch {
+    jsonStr = JSON.stringify({ error: "Failed to serialize response", raw: String(payload) }, null, 2);
+  }
+
+  // Telegram max message length is 4096 chars.
+  // Constrain to 3800 to avoid message delivery rejection.
+  if (jsonStr.length > 3800) {
+    jsonStr = jsonStr.slice(0, 3700) + '\n  // ... [truncated: response exceeds Telegram message size limit] ...\n}';
+  }
+
+  return '```json\n' + jsonStr + '\n```';
+}
+
 function formatVehicleCard(data: any, regNo = "N/A"): string {
-  if (!data) data = getFallbackRecord('vehicle', regNo);
-  const reg = (data.reg_number || regNo).toUpperCase();
-  return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🚗  VAHAN RC VEHICLE DOSSIER
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-📋 *OWNERSHIP & REGISTRATION*
-├ 🚘 *Reg Number:* \`${reg}\` _(Tap to copy)_
-├ 👤 *Owner Name:* *${data.owner_name || 'Registered Citizen'}* (${data.owner_count || 1}st Owner)
-├ 🏛️ *RTO Office:* \`${data.rto_code || 'N/A'}\` — ${data.rto_name || 'National Authority'}
-└ 🟢 *RC Status:* \`${data.rc_status || 'ACTIVE'}\`
-
-🏭 *VEHICLE SPECIFICATIONS*
-├ 🚙 *Maker / Model:* ${data.make || 'Standard'} ${data.model || 'Vehicle'}
-├ 🏷️ *Variant:* ${data.variant || 'Standard'} (${data.variant_year || 'N/A'})
-├ 🚘 *Class:* ${data.vehicle_class || 'Motor Car (LMV)'}
-├ 🎨 *Color:* ${data.color || 'Standard'}
-├ ⛽ *Fuel Type:* ${data.fuel_type || 'Petrol'}
-├ ⚙️ *Engine No:* \`${data.engine_number || 'Verified'}\`
-└ 🔑 *Chassis No:* \`${data.chassis_number || 'Verified'}\`
-
-🛡️ *VALIDITY & COMPLIANCE*
-├ 📅 *Registration:* ${data.registration_date || 'Active'}
-├ ⏳ *Fitness Upto:* ${data.fitness_upto || 'Valid'}
-├ 🛡️ *Insurance:* ${data.insurance_company || 'General Insurance'} (Exp: ${data.insurance_expiry || 'Active'})
-├ 💨 *PUCC Upto:* ${data.pucc_expiry || 'Valid'}
-└ 🏦 *Financer:* ${data.financer || 'None / Cash'}
-
-───────────────────────────────
-⚡ *Source:* MoRTH Vahan Central Register
-⏱️ *Status:* Verified & Authentic`;
+  return formatRawJsonResponse(data, regNo, 'vehicle');
 }
 
 function formatNum2Card(data: any, query: string): string {
-  const cleanPhone = query.replace(/[^0-9]/g, '').slice(-10);
-
-  // If data came from rehu-hitek with results array
-  if (data?.results && Array.isArray(data.results) && data.results.length > 0) {
-    const primary = data.results[0];
-    const name = primary.name || "Registered Subscriber";
-    const father = primary.fathersName ? `├ 👪 *Father/Guardian:* ${primary.fathersName}\n` : '';
-    const aadhar = primary.aadharNumber ? `├ 🪪 *Linked Aadhaar:* \`${primary.aadharNumber.slice(0, 4)} **** ${primary.aadharNumber.slice(-4)}\`\n` : '';
-    const altPhone = primary.otherNumber || primary.alt_phone || null;
-    const addressParts = [primary.address, primary.town, primary.district, primary.state, primary.pincode].filter(Boolean);
-    const fullAddress = addressParts.length > 0 ? addressParts.join(', ') : "India";
-    const state = primary.state || primary.district || "India";
-
-    let card = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  📱  NUM2 TELECOM INTELLIGENCE
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-👤 *SUBSCRIBER IDENTITY*
-├ 🏷️ *Name:* *${name}*
-├ 📞 *Mobile:* \`+91${cleanPhone}\` _(Tap to copy)_
-${father}${aadhar}├ 🟢 *Status:* \`Active (In Service)\`
-${altPhone ? `└ ☎️ *Alternate Contact:* \`${altPhone}\`` : `└ ☎️ *Alternate Contact:* None recorded`}
-
-📡 *NETWORK & TELECOM PROFILE*
-├ 🏢 *Carrier:* Reliance Jio / Airtel / Vi
-├ 🌐 *Telecom Circle:* ${state}
-└ 📶 *SIM Type:* 4G/5G VoLTE (Prepaid)
-
-📍 *REGISTRATION & ADDRESS*
-├ 🏠 *Address:* ${fullAddress}
-└ 🇮🇳 *Country:* India`;
-
-    if (data.results.length > 1) {
-      card += `\n\n📋 *ADDITIONAL LINKED RECORDS (${data.results.length})*\n`;
-      data.results.slice(1, 4).forEach((r: any, idx: number) => {
-        const rName = r.name || 'Subscriber';
-        const rLoc = [r.district, r.state].filter(Boolean).join(', ') || 'India';
-        card += `├ *${idx + 2}.* *${rName}* — ${rLoc}${r.otherNumber ? ` (\`${r.otherNumber}\`)` : ''}\n`;
-      });
-    }
-
-    card += `\n───────────────────────────────
-⚡ *Source:* Unified Telecom Identity Register (${primary.source || 'Live Sync'})
-⏱️ *Status:* Live Database Sync Complete`;
-    return card;
-  }
-
-  // Direct fields or fallback
-  if (!data || data.success === false) data = getFallbackRecord('num2', query);
-  const name = data.name || data.owner || data.subscriber || data.customer_name || data.Name || "Registered Subscriber";
-  const operator = data.operator || data.telecom || data.service_provider || data.carrier || "Reliance Jio Infocomm";
-  const circle = data.circle || data.telecom_circle || data.region || data.state || "Delhi & NCR";
-  const simType = data.type || data.connection_type || "4G/5G VoLTE (Prepaid)";
-  const status = data.status || "Active (In Service)";
-  const altPhone = data.alt_phone || data.alternate_number || data.alternate || "None recorded";
-  const address = data.address || data.city || data.location || "India";
-
-  return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  📱  NUM2 TELECOM INTELLIGENCE
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-👤 *SUBSCRIBER IDENTITY*
-├ 🏷️ *Name:* *${name}*
-├ 📞 *Mobile:* \`+91${cleanPhone}\` _(Tap to copy)_
-├ 🟢 *Status:* \`${status}\`
-└ ☎️ *Alternate Contact:* \`${altPhone}\`
-
-📡 *NETWORK & TELECOM PROFILE*
-├ 🏢 *Carrier:* ${operator}
-├ 🌐 *Telecom Circle:* ${circle}
-└ 📶 *SIM Type:* ${simType}
-
-📍 *REGISTRATION & ADDRESS*
-├ 🏠 *Address:* ${address}
-└ 🇮🇳 *Country:* India
-
-───────────────────────────────
-⚡ *Source:* Unified Telecom Identity Register
-⏱️ *Status:* Live Database Sync Complete`;
+  return formatRawJsonResponse(data, query, 'num2');
 }
 
 function formatVoterCard(data: any, query: string): string {
-  const r = (data?.results && data.results[0]) || data?.data || data?.elector || data || {};
-  
-  if (data?.success === false && data?.message) {
-    return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🗳️  ELECTORAL ROLL (VOTER ID)
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-🆔 *Searched EPIC:* \`${query.toUpperCase()}\`
-⚠️ *Status:* ${data.message}
-
-───────────────────────────────
-⚡ *Source:* Election Commission of India (ECI)`;
-  }
-
-  const name = r.name || r.voter_name || r.elector_name || "Registered Citizen";
-  const relation = r.relative_name || r.father_name || r.rln_name || "Father Recorded";
-  const gender = r.gender || "Male";
-  const age = r.age || "34";
-  const epic = (r.epic_no || r.epic || query).toUpperCase();
-  const state = r.state || r.st_name || "Delhi (NCT)";
-  const district = r.district || r.dist_name || "South Delhi";
-  const ac = r.assembly_constituency || r.ac_name || "Malviya Nagar (AC-43)";
-  const ps = r.polling_station || r.ps_name || "Govt Senior Secondary School, Room 4";
-
-  return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🗳️  ELECTORAL ROLL (VOTER ID)
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-👤 *ELECTOR DETAILS*
-├ 🏷️ *Voter Name:* *${name}*
-├ 👪 *Father / Guardian:* ${relation}
-├ ⚧ *Gender & Age:* ${gender} / ${age} yrs
-└ 🆔 *EPIC Card No:* \`${epic}\` _(Tap to copy)_
-
-📍 *CONSTITUENCY & POLLING BOOTH*
-├ 🗺️ *State:* ${state}
-├ 🏛️ *District:* ${district}
-├ 🗳️ *Assembly (AC):* ${ac}
-└ 🏫 *Polling Station:* ${ps}
-
-───────────────────────────────
-⚡ *Source:* Election Commission of India (ECI)
-⏱️ *Status:* Electoral Registry Confirmed`;
+  return formatRawJsonResponse(data, query, 'voter');
 }
 
 function formatAadharCard(data: any, query: string, isFamily = false): string {
-  const cleanAadhaar = query.replace(/[^0-9]/g, '');
-  const masked = cleanAadhaar.length >= 12
-    ? `${cleanAadhaar.slice(0, 4)} **** ${cleanAadhaar.slice(8)}`
-    : query;
-
-  if (isFamily) {
-    let card = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  👪  AADHAAR HOUSEHOLD GRAPH 
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-🆔 *Target Aadhaar:* \`${masked}\`
-
-`;
-    const members = Array.isArray(data?.family || data?.members || data?.results || (Array.isArray(data) ? data : null))
-      ? (data.family || data.members || data.results || data)
-      : [];
-
-    if (members.length > 0) {
-      card += `📋 *LINKED FAMILY MEMBERS (${members.length})*\n`;
-      members.slice(0, 6).forEach((m: any, idx: number) => {
-        const mName = m.name || m.ConsumerName || `Member #${idx + 1}`;
-        const rel = m.relation || (m.fathersName ? `S/O ${m.fathersName}` : "Dependent");
-        const age = m.age ? ` (${m.age} yrs)` : '';
-        const isLast = idx === Math.min(members.length, 6) - 1;
-        card += `${isLast ? '└' : '├'} *${idx + 1}.* *${mName}* — ${rel}${age}\n`;
-      });
-    } else {
-      card += `📋 *Household Record:* Verified\n├ 👤 Head of Family: *Identified*\n└ 👥 Family Status: Verified Household\n`;
-    }
-    card += `\n───────────────────────────────\n⚡ *Source:* UIDAI Household & Family Graph Node`;
-    return card;
-  }
-
-  // Individual Aadhaar Info
-  if (data?.results && Array.isArray(data.results) && data.results.length > 0) {
-    const primary = data.results[0];
-    const name = primary.name || "Verified Resident";
-    const father = primary.fathersName || "Recorded in Registry";
-    const phone = primary.phoneNumber || primary.mobileNumber || "Active Linked";
-    const address = [primary.address, primary.town, primary.district, primary.state, primary.pincode].filter(Boolean).join(', ') || primary.state || "India";
-    const state = primary.state || "India";
-
-    return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🪪  UIDAI AADHAAR SUMMARY   
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-👤 *VERIFIED RESIDENT*
-├ 🏷️ *Full Name:* *${name}*
-├ 🆔 *Masked UIDAI:* \`${masked}\` _(Tap to copy)_
-├ 👪 *Father / Guardian:* ${father}
-├ 📍 *Registered State:* ${state}
-├ 🏠 *Address:* ${address}
-└ 📱 *Linked Mobile:* \`${phone}\`
-
-───────────────────────────────
-🔒 *Security Notice:* Strict UIDAI Masking Enforced
-⚡ *Source:* National Identity Verification Node`;
-  }
-
-  if (!data || data.success === false) data = getFallbackRecord('aadhar2info', query);
-  const name = data.name || "Pooja Gupta";
-  const gender = data.gender || "Verified";
-  const yob = data.yob || data.dob || "Recorded";
-  const state = data.state || "Verified State";
-  const mobileLinked = data.mobile_linked || "Yes (Active Linked)";
-
-  return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🪪  UIDAI AADHAAR SUMMARY   
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-👤 *VERIFIED RESIDENT*
-├ 🏷️ *Full Name:* *${name}*
-├ 🆔 *Masked UIDAI:* \`${masked}\` _(Tap to copy)_
-├ ⚧ *Gender / YOB:* ${gender} / ${yob}
-├ 📍 *Registered State:* ${state}
-└ 📱 *Mobile Authentication:* ${mobileLinked}
-
-───────────────────────────────
-🔒 *Security Notice:* Strict UIDAI Masking Enforced
-⚡ *Source:* National Identity Verification Node`;
+  return formatRawJsonResponse(data, query, isFamily ? 'aadhar2family' : 'aadhar2info');
 }
 
 function formatLPGCard(data: any, query: string): string {
-  const c = data?.pd?.ConsumerDet || data?.ConsumerDet || {};
-  const d = data?.pd?.DistributorDet || data?.DistributorDet || {};
-
-  const name = c.ConsumerName || data?.consumer_name || data?.name || "Malliga S";
-  const cid = c.ConsumerId || c.ConsumerNo || data?.consumer_id || "LPG" + query.slice(-8);
-  const mobile = c.ConsumerMobile || query;
-  const status = c.ConsumerStatus || data?.status || "ACTIVE";
-  const type = c.ConsumerType || "Domestic LPG Connection";
-  const distributor = d.DistributorName || data?.distributor_name || "Authorized Gas Agency";
-
-  const addrParts = c.ConsumerAddress ? [
-    c.ConsumerAddress.AddressLine1,
-    c.ConsumerAddress.AddressLine2,
-    c.ConsumerAddress.City,
-    c.ConsumerAddress.District,
-    c.ConsumerAddress.State,
-    c.ConsumerAddress.Pincode
-  ].filter(Boolean) : [];
-  const address = addrParts.length > 0 ? addrParts.join(', ') : (data?.address || "Registered Address");
-
-  return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🔥  LPG GAS CONNECTION RECORD
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-👤 *CONSUMER PROFILE*
-├ 🏷️ *Consumer Name:* *${name}*
-├ 🆔 *Consumer Number:* \`${cid}\` _(Tap to copy)_
-├ 📱 *Linked Mobile:* \`+91 ${mobile}\`
-├ 🟢 *Connection Status:* \`${status}\`
-├ 📦 *Connection Type:* ${type}
-├ 🏪 *Distributor Agency:* ${distributor}
-└ 🏠 *Delivery Address:* ${address}
-
-───────────────────────────────
-⚡ *Source:* MoPNG Central Petroleum Database (UMANG/OMC)
-⏱️ *Status:* Verified Active Account`;
+  return formatRawJsonResponse(data, query, 'lpg');
 }
 
 function formatUPICard(data: any, query: string): string {
-  if (data?.success === false && data?.message) {
-    return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  💳  UPI VPA RESOLUTION      
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-🆔 *Target VPA:* \`${query}\`
-ℹ️ *Status:* ${data.message}
-
-💡 *Note:* If querying Paytm handles, ensure handle ends with \`@ptyes\`.
-───────────────────────────────
-⚡ *Source:* Instant NPCI Resolution Node`;
-  }
-
-  const name = data?.name || data?.account_holder || data?.customer_name || data?.data?.name || "Account Holder Verified";
-  const vpa = data?.vpa || data?.upi || query;
-  const bank = data?.bank_name || (vpa.includes('@') ? vpa.split('@')[1].toUpperCase() : "Nationalized Bank");
-  const phone = data?.mobile || data?.phone || data?.phoneNumber || "+91 98765 43210";
-
-  return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  💳  UPI VPA RESOLUTION      
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-👤 *PAYEE ACCOUNT PROFILE*
-├ 🏷️ *Account Holder:* *${name}*
-├ 🆔 *VPA Handle:* \`${vpa}\` _(Tap to copy)_
-├ 🏦 *Issuing PSP / Bank:* ${bank}
-└ 📱 *Linked Mobile:* \`${phone}\`
-
-───────────────────────────────
-⚡ *Source:* Instant NPCI Resolution Complete`;
+  return formatRawJsonResponse(data, query, 'upi2num');
 }
 
 function formatGSTCard(data: any, query: string, mode = 'gst'): string {
-  // If mode === 'name' or search-gstin response with active_gstins
-  if (mode === 'name' || data?.active_gstins || data?.cancelled_gstins) {
-    const active = data?.active_gstins || [];
-    const cancelled = data?.cancelled_gstins || [];
-
-    if (active.length > 0 || cancelled.length > 0) {
-      let card = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🏢  GST BY BUSINESS NAME    
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-🔍 *Query:* \`${query}\`
-📊 *Found:* ${active.length} Active | ${cancelled.length} Cancelled
-
-`;
-      if (active.length > 0) {
-        card += `🟢 *ACTIVE GST REGISTRATIONS:*\n`;
-        active.slice(0, 5).forEach((item: any, idx: number) => {
-          card += `*${idx + 1}. ${item.legal_name || item.trade_name || 'Enterprise'}*\n`;
-          card += `   ├ 🆔 GSTIN: \`${item.gstin}\`\n`;
-          card += `   └ 📍 State Code: ${item.state_code || 'N/A'} | Status: \`ACTIVE\`\n\n`;
-        });
-      }
-      if (cancelled.length > 0 && active.length < 3) {
-        card += `🔴 *Cancelled GSTINs:* \`${cancelled.slice(0, 3).map((c: any) => typeof c === 'object' ? c.gstin : c).join(', ')}\`\n`;
-      }
-      card += `───────────────────────────────\n⚡ *Source:* GSTN Master Repository (Active Portal)`;
-      return card;
-    }
-  }
-
-  // If mode === 'pan' or PAN gateway response with gstins array
-  if (mode === 'pan' || data?.gstins) {
-    const list = data?.gstins || [];
-    if (list.length > 0) {
-      let card = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🪪  GSTIN LINKED TO PAN     
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-🆔 *Target PAN:* \`${query.toUpperCase()}\`
-📊 *Linked GSTINs:* ${list.length} Registrations
-
-`;
-      list.slice(0, 5).forEach((item: any, idx: number) => {
-        card += `*${idx + 1}. GSTIN:* \`${item.gstin}\`\n`;
-        card += `   ├ 🗺️ *State:* ${item.state || 'N/A'}\n`;
-        card += `   └ 🟢 *Status:* \`${item.auth_status || 'Active'}\`\n\n`;
-      });
-      card += `───────────────────────────────\n⚡ *Source:* Razorpay / GSTN PAN Gateway`;
-      return card;
-    }
-  }
-
-  // Direct GSTIN lookup from gstin API
-  const details = data?.data?.enrichment_details?.online_provider?.details || data?.data || data || {};
-  const legalName = details.legal_name?.value || details.legal_name || data?.legal_name || "RELIANCE INTEGRATED SERVICES PRIVATE LIMITED";
-  const tradeName = details.trade_name?.value || details.trade_name || legalName;
-  const gstin = details.gstin?.value || data?.gstin || query.toUpperCase();
-  const status = details.status?.value || data?.status || "Active";
-  const regDateRaw = details.registration_date?.value || details.rgdt || data?.rgdt || "2017-07-01";
-  const regDate = regDateRaw.includes('T') ? regDateRaw.split('T')[0] : regDateRaw;
-  const type = details.tax_payer_type?.value || details.constitution?.value || data?.taxpayer_type || "Private Limited Company (Regular)";
-  const jurisdiction = details.state_jurisdiction?.value || details.central_jurisdiction?.value || data?.ctj || "Central & State Tax Office";
-
-  return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🏢  GSTIN TAXPAYER PROFILE  
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-🏬 *BUSINESS IDENTITY*
-├ 🏷️ *Legal Name:* *${legalName}*
-├ 🏪 *Trade Name:* ${tradeName}
-├ 🆔 *GSTIN Number:* \`${gstin}\` _(Tap to copy)_
-└ 🟢 *Registration Status:* \`${status}\`
-
-📋 *COMPLIANCE & JURISDICTION*
-├ 📅 *Effective Date:* ${regDate}
-├ 📋 *Taxpayer Type:* ${type}
-└ 🏛️ *Jurisdiction Center:* ${jurisdiction}
-
-───────────────────────────────
-⚡ *Source:* Goods & Services Tax Network (GSTN)`;
+  const type = mode === 'pan' ? 'gst2pan' : mode === 'name' ? 'gst2name' : 'gst';
+  return formatRawJsonResponse(data, query, type);
 }
 
 function getJoinInlineKeyboard() {

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, RefreshCw, Sparkles, Terminal } from 'lucide-react';
+import { Send, Bot, User, RefreshCw, Sparkles, Terminal, Copy, Check } from 'lucide-react';
 import type { LookupType } from '../types';
 
 interface Message {
@@ -7,6 +7,54 @@ interface Message {
   text: string;
   time: string;
 }
+
+const MessageContent: React.FC<{ text: string }> = ({ text }) => {
+  const [copied, setCopied] = useState(false);
+
+  // Check if text has ```json ... ``` or ``` ... ```
+  const codeBlockRegex = /```(?:json)?\n([\s\S]*?)\n?```/i;
+  const match = text.match(codeBlockRegex);
+
+  if (match) {
+    const beforeText = text.slice(0, match.index).trim();
+    const codeContent = match[1];
+    const afterText = text.slice((match.index || 0) + match[0].length).trim();
+
+    const handleCopy = () => {
+      navigator.clipboard.writeText(codeContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    };
+
+    return (
+      <div className="space-y-2">
+        {beforeText && <div className="leading-relaxed whitespace-pre-wrap">{beforeText}</div>}
+        <div className="rounded-xl overflow-hidden border border-slate-700/80 bg-slate-950/95 shadow-inner my-1">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-slate-800/80 border-b border-slate-700/60 text-[10px] text-slate-300 font-mono">
+            <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              API RAW JSON
+            </span>
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-700/70 hover:bg-slate-600 text-slate-200 hover:text-white transition cursor-pointer text-[10px]"
+              title="Copy Raw JSON"
+            >
+              {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+              <span>{copied ? 'Copied' : 'Copy'}</span>
+            </button>
+          </div>
+          <pre className="p-3 text-[11px] leading-relaxed font-mono overflow-x-auto text-emerald-300/90 selection:bg-emerald-900 selection:text-white scrollbar-thin">
+            {codeContent}
+          </pre>
+        </div>
+        {afterText && <div className="leading-relaxed whitespace-pre-wrap">{afterText}</div>}
+      </div>
+    );
+  }
+
+  return <div className="leading-relaxed whitespace-pre-wrap font-mono">{text}</div>;
+};
 
 interface TelegramSimulatorProps {
   onTriggerLookup: (type: LookupType, query: string) => void;
@@ -265,10 +313,10 @@ interface SimButton {
               className={`rounded-2xl p-3 shadow-md ${
                 m.sender === 'user'
                   ? 'bg-cyan-600 text-white rounded-tr-none'
-                  : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-none whitespace-pre-wrap font-mono'
+                  : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-none font-mono max-w-full overflow-hidden'
               }`}
             >
-              <div className="leading-relaxed">{m.text}</div>
+              <MessageContent text={m.text} />
               <div
                 className={`text-[9px] mt-1 text-right ${
                   m.sender === 'user' ? 'text-cyan-200' : 'text-slate-500'
