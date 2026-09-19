@@ -164,6 +164,7 @@ interface SimButton {
   text: string;
   primary?: boolean;
   cancel?: boolean;
+  admin?: boolean;
 }
 
   const defaultButtons: SimButton[] = [
@@ -177,6 +178,7 @@ interface SimButton {
     { label: '🏢 GST by Name', text: '🏢 GST by Name', primary: false },
     { label: '🪪 GST by PAN', text: '🪪 GST by PAN', primary: false },
     { label: '📄 GST Details', text: '📄 GST Details', primary: false },
+    { label: '👑 Admin Control Panel', text: '👑 Admin Control Panel', admin: true },
     { label: '👥 Refer & Earn', text: '👥 Refer & Earn', primary: false },
     { label: '💎 Redeem Code', text: '💎 Redeem Code', primary: false },
     { label: '📊 My Profile', text: '📊 My Profile', primary: false },
@@ -237,7 +239,7 @@ interface SimButton {
   };
 
   const currentButtons = awaitingInput && pendingButtons[awaitingInput]
-    ? pendingButtons[awaitingInput]
+    ? [...pendingButtons[awaitingInput], ...defaultButtons]
     : defaultButtons;
 
   return (
@@ -364,6 +366,8 @@ interface SimButton {
             className={`px-2.5 py-1 rounded-lg text-xs whitespace-nowrap transition cursor-pointer font-medium flex items-center gap-1 ${
               btn.cancel
                 ? 'bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300'
+                : btn.admin
+                ? 'bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 font-semibold shadow-sm'
                 : btn.primary
                 ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm'
                 : 'bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300'

@@ -361,6 +361,7 @@ function autoDetectLookupType(input: string): { type: string; cleanQuery: string
 
 // ── TELEGRAM BOT ENGINE ──
 let isTelegramPolling = false;
+let isBotActive = true;
 let lastUpdateId = 0;
 const telegramChatIds = new Set<string | number>();
 
@@ -380,6 +381,25 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
     });
   } catch (err: any) {
     console.error("Telegram send error:", err.message);
+  }
+}
+
+async function editTelegramMessageText(chatId: number | string, messageId: number, text: string, replyMarkup?: any) {
+  if (!BOT_TOKEN) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        parse_mode: 'Markdown',
+        reply_markup: replyMarkup,
+      })
+    });
+  } catch (err: any) {
+    console.error("Telegram editMessageText error:", err.message);
   }
 }
 
@@ -716,20 +736,87 @@ function getJoinReplyKeyboard() {
   };
 }
 
-function getMainReplyKeyboard() {
+function getMainReplyKeyboard(user?: any) {
+  const isAdmin = user && (String(user.id) === String(ADMIN_USER_ID) || user.role === 'admin');
+  const buttons = [
+    [{ text: "📱 Mobile Lookup" }, { text: "🚗 Vehicle Lookup" }],
+    [{ text: "🪪 Aadhaar Info" },   { text: "👨‍👩‍👧 Family Tree" }],
+    [{ text: "🗳️ Voter Lookup" },  { text: "🔥 LPG Gas Lookup" }],
+    [{ text: "💳 UPI Lookup" },     { text: "🏢 GST by Name" }],
+    [{ text: "🪪 GST by PAN" },     { text: "📄 GST Details" }],
+    [{ text: "👥 Refer & Earn" },   { text: "💎 Redeem Code" }],
+    [{ text: "📊 My Profile" },     { text: "❓ Help Guide" }]
+  ];
+  if (isAdmin) {
+    buttons.push([{ text: "👑 Admin Control Panel" }]);
+  }
   return {
-    keyboard: [
-      [{ text: "📱 Mobile Lookup" }, { text: "🚗 Vehicle Lookup" }],
-      [{ text: "🪪 Aadhaar Info" },   { text: "👨‍👩‍👧 Family Tree" }],
-      [{ text: "🗳️ Voter Lookup" },  { text: "🔥 LPG Gas Lookup" }],
-      [{ text: "💳 UPI Lookup" },     { text: "🏢 GST by Name" }],
-      [{ text: "🪪 GST by PAN" },     { text: "📄 GST Details" }],
-      [{ text: "👥 Refer & Earn" },   { text: "💎 Redeem Code" }],
-      [{ text: "📊 My Profile" },     { text: "❓ Help Guide" }]
-    ],
+    keyboard: buttons,
     resize_keyboard: true,
     is_persistent: true
   };
+}
+
+function getAdminInlineKeyboard(active: boolean) {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: active ? "🔴 Turn Bot OFF (Maintenance)" : "🟢 Turn Bot ON (Online)",
+          callback_data: "admin_toggle_bot"
+        }
+      ],
+      [
+        { text: "🚀 Drop Code (7D)", callback_data: "admin_drop_7" },
+        { text: "🚀 Drop Code (30D)", callback_data: "admin_drop_30" }
+      ],
+      [
+        { text: "💎 Gen 30D VIP Code", callback_data: "admin_gen_30" },
+        { text: "💎 Gen 365D VIP Code", callback_data: "admin_gen_365" }
+      ],
+      [
+        { text: "📢 Broadcast Announcement", callback_data: "admin_broadcast_prompt" },
+        { text: "🔄 Refresh Stats", callback_data: "admin_refresh_stats" }
+      ],
+      [
+        { text: "🏠 Return to Main Menu", callback_data: "action_main" }
+      ]
+    ]
+  };
+}
+
+function getAdminControlCard(active: boolean): string {
+  const totalUsers = usersStore.size;
+  const premiumUsers = Array.from(usersStore.values()).filter(u => u.role === 'premium').length;
+  const activeCodes = Array.from(redeemCodes.values()).filter(c => c.usesLeft > 0).length;
+  const today = getTodayString();
+  let todaySearches = 0;
+  for (const u of usersStore.values()) {
+    if (u.lastSearchDate === today) {
+      todaySearches += u.dailySearches;
+    }
+  }
+
+  return `👑 *ADMINISTRATOR MASTER CONTROL PANEL*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+🤖 *Bot Service Status:* ${active ? "🟢 *ONLINE (Active)*" : "🔴 *OFFLINE (Maintenance Mode)*"}
+⚡ *Mode:* ${active ? "All users can perform OSINT lookups" : "⚠️ Lookups paused for regular users (Admin only)"}
+
+📊 *Live Telemetry & Metrics:*
+• 👥 *Registered Users:* \`${totalUsers}\`
+• 💎 *VIP Premium Users:* \`${premiumUsers}\`
+• 🔍 *Today's Searches:* \`${todaySearches}\`
+• 📈 *Total Lifetime Searches:* \`${allTimeSearchesCount}\`
+• 🔑 *Active Redeem Vouchers:* \`${activeCodes}\`
+• 📢 *Official Channel:* \`${CHANNEL_USERNAME}\`
+
+⚡ *Admin Quick Commands:*
+• \`/bot on\` / \`/bot off\` ➜ Toggle bot power
+• \`/gen <days>\` ➜ Generate single-use key
+• \`/dropcode <days>\` ➜ Broadcast code drop to all users
+• \`/broadcast <msg>\` ➜ Global announcement
+
+👇 *Tap an action button below to execute:*`;
 }
 
 function getMainInlineKeyboard() {
@@ -1203,7 +1290,80 @@ Tap any service button directly, or send slash commands:
     return;
   }
 
+  // Handle Admin Callbacks
+  if (data.startsWith("admin_")) {
+    const user = getUser(userId);
+    const isAdmin = String(userId) === String(ADMIN_USER_ID) || user.role === 'admin';
+    if (!isAdmin) {
+      await answerTelegramCallbackQuery(cqId, "❌ Access Denied: Admin Only!", true);
+      return;
+    }
+
+    if (data === "admin_toggle_bot") {
+      isBotActive = !isBotActive;
+      await answerTelegramCallbackQuery(cqId, `Bot is now ${isBotActive ? "ONLINE 🟢" : "OFFLINE (Maintenance) 🔴"}!`, true);
+      const updatedCard = getAdminControlCard(isBotActive);
+      const updatedMarkup = getAdminInlineKeyboard(isBotActive);
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, updatedCard, updatedMarkup);
+      } else {
+        await sendTelegramMessage(chatId, updatedCard, updatedMarkup);
+      }
+      return;
+    }
+
+    if (data === "admin_drop_7" || data === "admin_drop_30") {
+      const days = data === "admin_drop_30" ? 30 : 7;
+      await answerTelegramCallbackQuery(cqId, `⚡ Dropping ${days}-day broadcast code...`);
+      const drop = await broadcastRedeemCode(days, cq.from?.first_name || 'Admin');
+      await sendTelegramMessage(chatId, `✅ *BROADCAST CODE DROPPED!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔑 *Code:* \`${drop.code}\`\n⏳ *Duration:* ${drop.days} Days\n📨 *Delivered to:* ${drop.sent} users\n⚡ *Rule:* Single-use only — Jo pehle redeem karega use hi milega!`, getMainReplyKeyboard(user));
+      return;
+    }
+
+    if (data === "admin_gen_30" || data === "admin_gen_365") {
+      const days = data === "admin_gen_365" ? 365 : 30;
+      const code = generateCode();
+      redeemCodes.set(code, {
+        code,
+        days,
+        role: 'premium',
+        usesLeft: 1,
+        totalUses: 1,
+        createdAt: new Date().toISOString(),
+        usedBy: [],
+      });
+      await answerTelegramCallbackQuery(cqId, `Generated ${days}-day code!`);
+      await sendTelegramMessage(chatId, `💎 *NEW VIP REDEEM CODE GENERATED*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔑 *Code:* \`${code}\`\n⏳ *Duration:* ${days} Days VIP Access\n⚡ *Uses:* 1 (Single-use)\n👤 *Admin:* ${cq.from?.first_name || 'Admin'}\n\n👉 Share or redeem with: \`/redeem ${code}\``, getMainReplyKeyboard(user));
+      return;
+    }
+
+    if (data === "admin_broadcast_prompt") {
+      user.pendingAction = 'admin_broadcast';
+      await answerTelegramCallbackQuery(cqId, "Ready for announcement text");
+      await sendTelegramMessage(chatId, `📢 *SEND BROADCAST ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nPlease type and send the message you want to broadcast to all registered bot users:\n\n*(Or send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
+
+    if (data === "admin_refresh_stats") {
+      await answerTelegramCallbackQuery(cqId, "Stats refreshed!");
+      const updatedCard = getAdminControlCard(isBotActive);
+      const updatedMarkup = getAdminInlineKeyboard(isBotActive);
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, updatedCard, updatedMarkup);
+      } else {
+        await sendTelegramMessage(chatId, updatedCard, updatedMarkup);
+      }
+      return;
+    }
+  }
+
   await answerTelegramCallbackQuery(cqId);
+}
+
+async function sendSearchResult(chatId: number | string, user: UserRecord, card: string, type: string, query?: string) {
+  user.pendingAction = undefined;
+  await sendTelegramMessage(chatId, card, getResultInlineKeyboard(type, query));
+  await sendTelegramMessage(chatId, "⚡ Select next service below or send a query directly:", getMainReplyKeyboard(user));
 }
 
 async function handleTelegramUpdate(msg: any) {
@@ -1313,13 +1473,57 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
 
   const isAdmin = String(userId) === String(ADMIN_USER_ID) || user.role === 'admin';
 
-  // ── ADMIN TELEGRAM COMMANDS ──
+  // ── BOT MAINTENANCE / OFFLINE CHECK ──
+  if (!isBotActive && !isAdmin) {
+    await sendTelegramMessage(chatId, `🔴 *BOT IS TEMPORARILY UNDER MAINTENANCE*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ Bot services and investigation tools are currently paused by the Administrator for system updates.
+
+📢 *Updates Channel:* [${CHANNEL_USERNAME}](${CHANNEL_LINK})
+⏳ Regular lookups will resume shortly. Thank you for your patience!`);
+    return;
+  }
+
+  // ── ADMIN BROADCAST PENDING ACTION ──
+  if (user.pendingAction === 'admin_broadcast' && isAdmin) {
+    user.pendingAction = undefined;
+    if (text === "❌ Cancel" || text === "/cancel") {
+      await sendTelegramMessage(chatId, "🔙 Broadcast cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+    await sendTelegramMessage(chatId, `⏳ *Broadcasting announcement to all registered users...*`);
+    const result = await broadcastTelegramMessage(`📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${text}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— ${msg.from?.first_name || 'Admin'}`);
+    await sendTelegramMessage(chatId, `✅ Broadcast complete!\nDelivered to: ${result.sent} users\nFailed: ${result.failed}`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  // ── ADMIN TELEGRAM COMMANDS & PANEL ──
+  if (isAdmin && (text === "👑 Admin Control Panel" || text === "⚙️ Admin Panel" || text === "/admin")) {
+    user.pendingAction = undefined;
+    const adminCard = getAdminControlCard(isBotActive);
+    const adminMarkup = getAdminInlineKeyboard(isBotActive);
+    await sendTelegramMessage(chatId, adminCard, adminMarkup);
+    return;
+  }
+
+  if (isAdmin && (text === "/bot on" || text === "/bot_on")) {
+    isBotActive = true;
+    await sendTelegramMessage(chatId, `🟢 *BOT IS NOW ONLINE*\nAll registered users can now execute OSINT queries normally.`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text === "/bot off" || text === "/bot_off")) {
+    isBotActive = false;
+    await sendTelegramMessage(chatId, `🔴 *BOT IS NOW OFFLINE (MAINTENANCE MODE)*\nServices are paused for all regular users. Only administrators can use the bot.`, getMainReplyKeyboard(user));
+    return;
+  }
+
   if (isAdmin && (text.startsWith("/broadcast_code") || text.startsWith("/dropcode"))) {
     const parts = text.split(/\s+/);
     const days = parseInt(parts[1], 10) || 7;
     await sendTelegramMessage(chatId, `⏳ *Generating & Broadcasting ${days}-day single-use code...*`);
     const drop = await broadcastRedeemCode(days, msg.from?.first_name || 'Admin');
-    await sendTelegramMessage(chatId, `✅ *BROADCAST CODE DROPPED!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔑 *Code:* \`${drop.code}\`\n⏳ *Duration:* ${drop.days} Days\n📨 *Delivered to:* ${drop.sent} users\n⚡ *Rule:* Single-use only — Jo pehle redeem karega use hi milega!`, getMainReplyKeyboard());
+    await sendTelegramMessage(chatId, `✅ *BROADCAST CODE DROPPED!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔑 *Code:* \`${drop.code}\`\n⏳ *Duration:* ${drop.days} Days\n📨 *Delivered to:* ${drop.sent} users\n⚡ *Rule:* Single-use only — Jo pehle redeem karega use hi milega!`, getMainReplyKeyboard(user));
     return;
   }
 
@@ -1336,7 +1540,7 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
       createdAt: new Date().toISOString(),
       usedBy: [],
     });
-    await sendTelegramMessage(chatId, `💎 *NEW REDEEM CODE GENERATED*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔑 *Code:* \`${code}\`\n⏳ *Duration:* ${days} Days VIP Premium\n⚡ *Uses:* 1 (Single-use)\n👤 *Admin:* ${msg.from?.first_name || 'Admin'}\n\n👉 Share this directly or broadcast with: \`/dropcode ${days}\``, getMainReplyKeyboard());
+    await sendTelegramMessage(chatId, `💎 *NEW REDEEM CODE GENERATED*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔑 *Code:* \`${code}\`\n⏳ *Duration:* ${days} Days VIP Premium\n⚡ *Uses:* 1 (Single-use)\n👤 *Admin:* ${msg.from?.first_name || 'Admin'}\n\n👉 Share this directly or broadcast with: \`/dropcode ${days}\``, getMainReplyKeyboard(user));
     return;
   }
 
@@ -1348,28 +1552,7 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
     }
     await sendTelegramMessage(chatId, `⏳ *Broadcasting announcement to all users...*`);
     const result = await broadcastTelegramMessage(`📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${broadcastText}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— ${msg.from?.first_name || 'Admin'}`);
-    await sendTelegramMessage(chatId, `✅ Announcement sent to ${result.sent} users (${result.failed} failed).`, getMainReplyKeyboard());
-    return;
-  }
-
-  if (isAdmin && (text === "/admin" || text === "⚙️ Admin Panel")) {
-    const totalUsers = usersStore.size;
-    const premiumCount = Array.from(usersStore.values()).filter(u => u.role === 'premium').length;
-    const adminText = `👑 *ADMINISTRATOR CONTROL PANEL*
-━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 *Live Network Stats:*
-• Total Users: \`${totalUsers}\`
-• Premium Users: \`${premiumCount}\`
-• Total Searches: \`${allTimeSearchesCount}\`
-• Active Codes: \`${Array.from(redeemCodes.values()).filter(c => c.usesLeft > 0).length}\`
-
-⚡ *Admin Commands:*
-• \`/gen <days>\` ➜ Generate custom single-use code (e.g. \`/gen 30\`)
-• \`/dropcode <days>\` ➜ Broadcast 1-use code to all users (First-come, first-served)
-• \`/broadcast <msg>\` ➜ Send announcement to all users
-• \`/stats\` ➜ View stats
-━━━━━━━━━━━━━━━━━━━━━━━━━`;
-    await sendTelegramMessage(chatId, adminText, getMainReplyKeyboard());
+    await sendTelegramMessage(chatId, `✅ Announcement sent to ${result.sent} users (${result.failed} failed).`, getMainReplyKeyboard(user));
     return;
   }
 
@@ -1480,10 +1663,34 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
     return;
   }
 
+  // ── AUTO-RESET PENDING ACTION IF USER TAPS ANY AUTOMATION BUTTON OR COMMAND ──
+  const isNavOrActionButton =
+    text.startsWith('/') ||
+    text === "❌ Cancel" ||
+    text === "🏠 Main Menu" ||
+    text.includes("Mobile Lookup") ||
+    text.includes("Vehicle Lookup") ||
+    text.includes("Voter Lookup") ||
+    text.includes("Aadhaar Info") ||
+    text.includes("Family Tree") ||
+    text.includes("LPG") ||
+    text.includes("UPI") ||
+    text.includes("GST") ||
+    text.includes("Refer") ||
+    text.includes("Redeem") ||
+    text.includes("Profile") ||
+    text.includes("Help") ||
+    text.includes("Admin Control") ||
+    text.includes("Admin Panel");
+
+  if (isNavOrActionButton && user.pendingAction && text !== "❌ Cancel" && user.pendingAction !== 'admin_broadcast') {
+    user.pendingAction = undefined;
+  }
+
   // ── HANDLE CANCEL ──
   if (text === "❌ Cancel" || text === "/cancel") {
     user.pendingAction = undefined;
-    await sendTelegramMessage(chatId, `🔙 *Operation Cancelled*\nReturned to Main Menu. Select an option below:`, getMainReplyKeyboard());
+    await sendTelegramMessage(chatId, `🔙 *Operation Cancelled*\nReturned to Main Menu. Select an option below:`, getMainReplyKeyboard(user));
     return;
   }
 
@@ -1501,7 +1708,7 @@ You have used up your free daily search allowance.
 Invite colleagues or friends to use the bot! Each successful referral permanently grants you *+10 extra daily searches*!
 👉 Send \`/refer\` to get your personal invite link.
 
-💎 Or send \`/redeem CODE\` to activate VIP unlimited access.`, getMainReplyKeyboard());
+💎 Or send \`/redeem CODE\` to activate VIP unlimited access.`, getMainReplyKeyboard(user));
       return;
     }
 
@@ -1511,7 +1718,7 @@ Invite colleagues or friends to use the bot! Each successful referral permanentl
         await sendTelegramMessage(chatId, `⚠️ *Invalid Mobile Number!*
 Please enter a valid *10-digit mobile number* (e.g., \`6399964669\` or \`9876543210\`):
 
-Tap *❌ Cancel* to return.`, getCancelKeyboard());
+Tap *❌ Cancel & Return* below or select another service directly:`, getPromptInlineKeyboard('num2'));
         return;
       }
       user.pendingAction = undefined;
@@ -1520,7 +1727,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       let data = await fetchWithTimeout(`${NUM2_API_URL}${cleanPhone}`);
       recordSearch(userId);
       const card = formatNum2Card(data, cleanPhone);
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard('num2', cleanPhone));
+      await sendSearchResult(chatId, user, card, 'num2', cleanPhone);
       return;
     }
 
@@ -1530,7 +1737,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
         await sendTelegramMessage(chatId, `⚠️ *Invalid Registration Number!*
 Please send a valid registration number (e.g., \`HR26EV0001\` or \`DL01AB1234\`):
 
-Tap *❌ Cancel* to return.`, getCancelKeyboard());
+Tap *❌ Cancel & Return* below or select another service directly:`, getPromptInlineKeyboard('vehicle'));
         return;
       }
       user.pendingAction = undefined;
@@ -1539,7 +1746,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       let data = await fetchVehicleInfo(reg);
       recordSearch(userId);
       const card = formatVehicleCard(data, reg);
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard('vehicle', reg));
+      await sendSearchResult(chatId, user, card, 'vehicle', reg);
       return;
     }
 
@@ -1551,7 +1758,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       let data = await fetchWithTimeout(`${VOTER_API_URL}${epic}`);
       recordSearch(userId);
       const card = formatVoterCard(data, epic);
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard('voter', epic));
+      await sendSearchResult(chatId, user, card, 'voter', epic);
       return;
     }
 
@@ -1561,7 +1768,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
         await sendTelegramMessage(chatId, `⚠️ *Invalid Aadhaar Number!*
 Please send a valid *12-digit Aadhaar number* (e.g., \`123456789012\`):
 
-Tap *❌ Cancel* to return.`, getCancelKeyboard());
+Tap *❌ Cancel & Return* below or select another service directly:`, getPromptInlineKeyboard('aadhar2info'));
         return;
       }
       user.pendingAction = undefined;
@@ -1570,7 +1777,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       let data = await fetchWithTimeout(`${AADHAR2_API_URL}${aadhaar}`);
       recordSearch(userId);
       const card = formatAadharCard(data, aadhaar, false);
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard('aadhar2info', aadhaar));
+      await sendSearchResult(chatId, user, card, 'aadhar2info', aadhaar);
       return;
     }
 
@@ -1580,7 +1787,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
         await sendTelegramMessage(chatId, `⚠️ *Invalid Aadhaar Number!*
 Please send a valid *12-digit Aadhaar number* (e.g., \`123456789012\`):
 
-Tap *❌ Cancel* to return.`, getCancelKeyboard());
+Tap *❌ Cancel & Return* below or select another service directly:`, getPromptInlineKeyboard('aadhar2family'));
         return;
       }
       user.pendingAction = undefined;
@@ -1589,7 +1796,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       let data = await fetchWithTimeout(`${AADHAR2FAM_API_URL}${aadhaar}`);
       recordSearch(userId);
       const card = formatAadharCard(data, aadhaar, true);
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard('aadhar2family', aadhaar));
+      await sendSearchResult(chatId, user, card, 'aadhar2family', aadhaar);
       return;
     }
 
@@ -1601,7 +1808,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       let data = await fetchWithTimeout(`${LPG_API_URL}${q}`);
       recordSearch(userId);
       const card = formatLPGCard(data, q);
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard('lpg', q));
+      await sendSearchResult(chatId, user, card, 'lpg', q);
       return;
     }
 
@@ -1613,7 +1820,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       let data = await fetchWithTimeout(`${UPI2NUM_API_URL}${encodeURIComponent(upi)}`);
       recordSearch(userId);
       const card = formatUPICard(data, upi);
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard('upi2num', upi));
+      await sendSearchResult(chatId, user, card, 'upi2num', upi);
       return;
     }
 
@@ -1625,7 +1832,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       let data = await fetchWithTimeout(`${GST2NAME_API_URL}${encodeURIComponent(name)}`);
       recordSearch(userId);
       const card = formatGSTCard(data, name, 'name');
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard('gst2name', name));
+      await sendSearchResult(chatId, user, card, 'gst2name', name);
       return;
     }
 
@@ -1637,7 +1844,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       let data = await fetchWithTimeout(`${GST2PAN_API_URL}${pan}`);
       recordSearch(userId);
       const card = formatGSTCard(data, pan, 'pan');
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard('gst2pan', pan));
+      await sendSearchResult(chatId, user, card, 'gst2pan', pan);
       return;
     }
 
@@ -1649,7 +1856,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       let data = await fetchWithTimeout(`${GST_API_URL}${gstin}`);
       recordSearch(userId);
       const card = formatGSTCard(data, gstin, 'gst');
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard('gst', gstin));
+      await sendSearchResult(chatId, user, card, 'gst', gstin);
       return;
     }
 
@@ -1658,7 +1865,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       const code = text.trim().toUpperCase();
       const voucher = redeemCodes.get(code);
       if (!voucher) {
-        await sendTelegramMessage(chatId, `❌ *Invalid Code*\nRedeem code \`${code}\` not found.`, getMainReplyKeyboard());
+        await sendTelegramMessage(chatId, `❌ *Invalid Code*\nRedeem code \`${code}\` not found.`, getMainReplyKeyboard(user));
         return;
       }
       if (voucher.usesLeft <= 0) {
@@ -1666,11 +1873,11 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
         const claimMsg = isClaimed
           ? `❌ *Already Claimed!*\nYe redeem code pehle hi kisi aur user ne redeem kar liya hai!\n*(First-Come, First-Served — Sirf pehle user ko milta hai)*`
           : `❌ *Expired Code*\nIs code ke uses khatam ho chuke hain.`;
-        await sendTelegramMessage(chatId, claimMsg, getMainReplyKeyboard());
+        await sendTelegramMessage(chatId, claimMsg, getMainReplyKeyboard(user));
         return;
       }
       if (voucher.usedBy && voucher.usedBy.includes(String(userId))) {
-        await sendTelegramMessage(chatId, `⚠️ *Already Redeemed!*\nAap pehle hi is code ko claim kar chuke hain.`, getMainReplyKeyboard());
+        await sendTelegramMessage(chatId, `⚠️ *Already Redeemed!*\nAap pehle hi is code ko claim kar chuke hain.`, getMainReplyKeyboard(user));
         return;
       }
 
@@ -1685,86 +1892,86 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
 ⏳ *Duration:* ${voucher.days} Days VIP Access
 ⚡ *Status:* Unlimited lookups unlocked!
 🏆 *Claimed by:* Agent \`${userId}\`
-━━━━━━━━━━━━━━━━━━━━━━━━━`, getMainReplyKeyboard());
+━━━━━━━━━━━━━━━━━━━━━━━━━`, getMainReplyKeyboard(user));
       return;
     }
   }
 
-  // ── KEYBOARD BUTTON ACTIONS (Prompts with Cancel button) ──
+  // ── KEYBOARD BUTTON ACTIONS (Prompts with Inline Cancel, bottom buttons remain intact) ──
   if (text === "📱 Mobile Lookup" || text === "📱 Num2 Lookup" || text.includes("Num2") || text.includes("Mobile") || text.toLowerCase() === "phone") {
     user.pendingAction = 'num2';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('num2'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('num2'), getPromptInlineKeyboard('num2'));
     return;
   }
 
   if (text === "🚗 Vehicle Lookup" || text.includes("Vehicle") || text.toLowerCase() === "vehicle") {
     user.pendingAction = 'vehicle';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('vehicle'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('vehicle'), getPromptInlineKeyboard('vehicle'));
     return;
   }
 
   if (text === "🗳️ Voter Lookup" || text.includes("Voter") || text.toLowerCase() === "voter") {
     user.pendingAction = 'voter';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('voter'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('voter'), getPromptInlineKeyboard('voter'));
     return;
   }
 
   if (text === "🪪 Aadhaar Info" || text === "🪪 Aadhar2Info" || text.includes("Aadhar") || text.includes("Aadhaar")) {
     user.pendingAction = 'aadhar2info';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('aadhar2info'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('aadhar2info'), getPromptInlineKeyboard('aadhar2info'));
     return;
   }
 
   if (text === "👨‍👩‍👧 Family Tree" || text === "👪 Aadhar2Family" || text.includes("Family")) {
     user.pendingAction = 'aadhar2family';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('aadhar2family'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('aadhar2family'), getPromptInlineKeyboard('aadhar2family'));
     return;
   }
 
   if (text === "🔥 LPG Gas Lookup" || text === "🔥 LPG Lookup" || text.includes("LPG") || text.toLowerCase() === "lpg") {
     user.pendingAction = 'lpg';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('lpg'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('lpg'), getPromptInlineKeyboard('lpg'));
     return;
   }
 
   if (text === "💳 UPI Lookup" || text === "💳 UPI2Num" || text.includes("UPI") || text.toLowerCase() === "upi") {
     user.pendingAction = 'upi2num';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('upi2num'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('upi2num'), getPromptInlineKeyboard('upi2num'));
     return;
   }
 
   if (text === "🏢 GST by Name" || text === "🏢 GST2Name" || text.includes("GST by Name") || text.includes("GST2Name")) {
     user.pendingAction = 'gst2name';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('gst2name'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('gst2name'), getPromptInlineKeyboard('gst2name'));
     return;
   }
 
   if (text === "🪪 GST by PAN" || text === "🪪 GST2PAN" || text.includes("GST by PAN") || text.includes("GST2PAN")) {
     user.pendingAction = 'gst2pan';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('gst2pan'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('gst2pan'), getPromptInlineKeyboard('gst2pan'));
     return;
   }
 
   if (text === "📄 GST Details" || text === "📄 GSTIN Profile" || text.includes("GST Details") || text.includes("GSTIN Profile") || text.toLowerCase() === "gst") {
     user.pendingAction = 'gst';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('gst'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('gst'), getPromptInlineKeyboard('gst'));
     return;
   }
 
   if (text === "💎 Redeem Code" || text === "💎 Redeem" || text.includes("Redeem")) {
     user.pendingAction = 'redeem';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('redeem'), getCancelKeyboard());
+    await sendTelegramMessage(chatId, getPromptCard('redeem'), getPromptInlineKeyboard('redeem'));
     return;
   }
 
@@ -1776,7 +1983,7 @@ You have used up your free daily search allowance.
 
 🎁 *Earn +10 Extra Searches Daily:*
 👉 Send \`/refer\` to invite friends and permanently boost your daily search limit by *+10 credits each*!
-💎 Or send \`/redeem CODE\` for unlimited VIP access.`, getMainReplyKeyboard());
+💎 Or send \`/redeem CODE\` for unlimited VIP access.`, getMainReplyKeyboard(user));
     return;
   }
 
@@ -1792,7 +1999,7 @@ You have used up your free daily search allowance.
     const data = await fetchVehicleInfo(query.replace(/\s+/g, ''));
     recordSearch(userId);
     const card = formatVehicleCard(data, query);
-    await sendTelegramMessage(chatId, card, getResultInlineKeyboard('vehicle', query));
+    await sendSearchResult(chatId, user, card, 'vehicle', query);
     return;
   }
 
@@ -1809,7 +2016,7 @@ You have used up your free daily search allowance.
     const data = await fetchWithTimeout(`${NUM2_API_URL}${cleanPhone}`);
     recordSearch(userId);
     const card = formatNum2Card(data, cleanPhone);
-    await sendTelegramMessage(chatId, card, getResultInlineKeyboard('num2', cleanPhone));
+    await sendSearchResult(chatId, user, card, 'num2', cleanPhone);
     return;
   }
 
@@ -1825,7 +2032,7 @@ You have used up your free daily search allowance.
     const data = await fetchWithTimeout(`${VOTER_API_URL}${query}`);
     recordSearch(userId);
     const card = formatVoterCard(data, query);
-    await sendTelegramMessage(chatId, card, getResultInlineKeyboard('voter', query));
+    await sendSearchResult(chatId, user, card, 'voter', query);
     return;
   }
 
@@ -1841,7 +2048,7 @@ You have used up your free daily search allowance.
     const data = await fetchWithTimeout(`${AADHAR2_API_URL}${query}`);
     recordSearch(userId);
     const card = formatAadharCard(data, query, false);
-    await sendTelegramMessage(chatId, card, getResultInlineKeyboard('aadhar2info', query));
+    await sendSearchResult(chatId, user, card, 'aadhar2info', query);
     return;
   }
 
@@ -1857,7 +2064,7 @@ You have used up your free daily search allowance.
     const data = await fetchWithTimeout(`${AADHAR2FAM_API_URL}${query}`);
     recordSearch(userId);
     const card = formatAadharCard(data, query, true);
-    await sendTelegramMessage(chatId, card, getResultInlineKeyboard('aadhar2family', query));
+    await sendSearchResult(chatId, user, card, 'aadhar2family', query);
     return;
   }
 
@@ -1873,7 +2080,7 @@ You have used up your free daily search allowance.
     const data = await fetchWithTimeout(`${LPG_API_URL}${query}`);
     recordSearch(userId);
     const card = formatLPGCard(data, query);
-    await sendTelegramMessage(chatId, card, getResultInlineKeyboard('lpg', query));
+    await sendSearchResult(chatId, user, card, 'lpg', query);
     return;
   }
 
@@ -1889,7 +2096,7 @@ You have used up your free daily search allowance.
     const data = await fetchWithTimeout(`${UPI2NUM_API_URL}${encodeURIComponent(query)}`);
     recordSearch(userId);
     const card = formatUPICard(data, query);
-    await sendTelegramMessage(chatId, card, getResultInlineKeyboard('upi2num', query));
+    await sendSearchResult(chatId, user, card, 'upi2num', query);
     return;
   }
 
@@ -1905,7 +2112,7 @@ You have used up your free daily search allowance.
     const data = await fetchWithTimeout(`${GST2NAME_API_URL}${encodeURIComponent(query)}`);
     recordSearch(userId);
     const card = formatGSTCard(data, query, 'name');
-    await sendTelegramMessage(chatId, card, getResultInlineKeyboard('gst2name', query));
+    await sendSearchResult(chatId, user, card, 'gst2name', query);
     return;
   }
 
@@ -1921,7 +2128,7 @@ You have used up your free daily search allowance.
     const data = await fetchWithTimeout(`${GST2PAN_API_URL}${query}`);
     recordSearch(userId);
     const card = formatGSTCard(data, query, 'pan');
-    await sendTelegramMessage(chatId, card, getResultInlineKeyboard('gst2pan', query));
+    await sendSearchResult(chatId, user, card, 'gst2pan', query);
     return;
   }
 
@@ -1937,7 +2144,7 @@ You have used up your free daily search allowance.
     const data = await fetchWithTimeout(`${GST_API_URL}${query}`);
     recordSearch(userId);
     const card = formatGSTCard(data, query, 'gst');
-    await sendTelegramMessage(chatId, card, getResultInlineKeyboard('gst', query));
+    await sendSearchResult(chatId, user, card, 'gst', query);
     return;
   }
 
@@ -1980,12 +2187,12 @@ You have used up your free daily search allowance.
 
     if (card) {
       recordSearch(userId);
-      await sendTelegramMessage(chatId, card, getResultInlineKeyboard(detected.type, detected.cleanQuery));
+      await sendSearchResult(chatId, user, card, detected.type, detected.cleanQuery);
       return;
     }
   }
 
-  await sendTelegramMessage(chatId, `👋 Tap any service button below or send /help to view command list:`, getMainReplyKeyboard());
+  await sendTelegramMessage(chatId, `👋 Tap any service button below or send /help to view command list:`, getMainReplyKeyboard(user));
 }
 
 function clean(str: string): string {
@@ -2696,6 +2903,31 @@ Tap *❌ Cancel* to return to main menu.`,
     }
 
     // Admin commands in simulator
+    if (text === "👑 Admin Control Panel" || text === "⚙️ Admin Panel" || text === "/admin") {
+      user.pendingAction = undefined;
+      const card = getAdminControlCard(isBotActive);
+      return res.json({
+        reply: card,
+        awaitingInput: false,
+      });
+    }
+
+    if (text === "/bot on" || text === "/bot_on") {
+      isBotActive = true;
+      return res.json({
+        reply: `🟢 *BOT IS NOW ONLINE*\nAll registered users can now execute OSINT queries normally.`,
+        awaitingInput: false,
+      });
+    }
+
+    if (text === "/bot off" || text === "/bot_off") {
+      isBotActive = false;
+      return res.json({
+        reply: `🔴 *BOT IS NOW OFFLINE (MAINTENANCE MODE)*\nServices are paused for all regular users. Only administrators can use the bot.`,
+        awaitingInput: false,
+      });
+    }
+
     if (text.startsWith("/dropcode") || text.startsWith("/broadcast_code")) {
       const parts = text.split(/\s+/);
       const days = parseInt(parts[1], 10) || 7;
