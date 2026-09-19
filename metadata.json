@@ -1,0 +1,6 @@
+{
+  "name": "iramX OSINT Bot",
+  "description": "OSINT intelligence search and analytics bot for Vehicle RC, Num2, Aadhaar, Voter, LPG, UPI, and GST lookups with Web UI and Telegram Bot support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
