@@ -63,4 +63,5 @@ export interface RedeemCode {
   usesLeft: number;
   totalUses: number;
   createdAt: string;
+  usedBy?: string[];
 }

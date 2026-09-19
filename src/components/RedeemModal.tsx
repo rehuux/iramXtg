@@ -84,7 +84,7 @@ export const RedeemModal: React.FC<RedeemModalProps> = ({ isOpen, onClose, onRed
                 type="text"
                 value={code}
                 onChange={(e) => setCode(e.target.value.toUpperCase())}
-                placeholder="e.g. VIP2026XYZ"
+                placeholder="IRAM-XXXX-XXXX"
                 className="w-full bg-slate-950 text-white uppercase font-mono tracking-widest px-4 py-3 rounded-xl border border-slate-700 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:outline-none text-sm"
                 disabled={loading}
                 autoFocus

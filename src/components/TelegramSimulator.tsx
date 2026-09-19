@@ -172,7 +172,6 @@ interface SimButton {
     ],
     redeem: [
       { label: '❌ Cancel', text: '❌ Cancel', cancel: true },
-      { label: '💎 IRAMPREMIUM2026', text: 'IRAMPREMIUM2026', primary: true },
     ],
     gst2name: [
       { label: '❌ Cancel', text: '❌ Cancel', cancel: true },
