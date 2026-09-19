@@ -218,7 +218,7 @@ export default function App() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="text-sm font-semibold text-white">Channel Membership Required</h2>
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-mono border border-sky-500/30">
-                    Channel ID: -1002085221963
+                    Mandatory
                   </span>
                 </div>
                 <p className="text-xs text-slate-300 mt-1 leading-relaxed">

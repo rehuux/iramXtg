@@ -22,7 +22,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   const [messages, setMessages] = useState<Message[]>([
     {
       sender: 'bot',
-      text: `🤖 *iramX v7.3* — OSINT Intelligence Bot\n══════════════════════════\n  Welcome to the Telegram Interactive Shell!\n  Tap "📱 Num2 Lookup" or any button below.\n· · · · · · · · · · · · · · · · · · · · · · · · ·\n  📢 Channel: @RehuSzr (-1002085221963)\n  💎 Unlimited queries for Premium users\n  💡 Free Limit: 20 searches/day`,
+      text: `🤖 *iramX v7.3* — OSINT Intelligence Bot\n══════════════════════════\n  Welcome to the Telegram Interactive Shell!\n  Tap "📱 Mobile Lookup" or any button below.\n· · · · · · · · · · · · · · · · · · · · · · · · ·\n  📢 Channel: @RehuSzr\n  💎 Unlimited queries for Premium users\n  💡 Free Limit: 20 searches/day`,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -119,16 +119,20 @@ interface SimButton {
 }
 
   const defaultButtons: SimButton[] = [
-    { label: '📱 Num2 Lookup', text: '📱 Num2 Lookup', primary: true },
+    { label: '📱 Mobile Lookup', text: '📱 Mobile Lookup', primary: true },
     { label: '🚗 Vehicle Lookup', text: '🚗 Vehicle Lookup', primary: false },
+    { label: '🪪 Aadhaar Info', text: '🪪 Aadhaar Info', primary: false },
+    { label: '👨‍👩‍👧 Family Tree', text: '👨‍👩‍👧 Family Tree', primary: false },
     { label: '🗳️ Voter Lookup', text: '🗳️ Voter Lookup', primary: false },
-    { label: '🪪 Aadhar2Info', text: '🪪 Aadhar2Info', primary: false },
-    { label: '👪 Aadhar2Family', text: '👪 Aadhar2Family', primary: false },
-    { label: '🔥 LPG Lookup', text: '🔥 LPG Lookup', primary: false },
-    { label: '💳 UPI2Num', text: '💳 UPI2Num', primary: false },
-    { label: '👥 Refer & Earn (+10 Daily)', text: '👥 Refer & Earn (+10 Daily)', primary: false },
-    { label: '💎 Redeem', text: '💎 Redeem', primary: false },
-    { label: '📊 My Stats', text: '📊 My Stats', primary: false },
+    { label: '🔥 LPG Gas Lookup', text: '🔥 LPG Gas Lookup', primary: false },
+    { label: '💳 UPI Lookup', text: '💳 UPI Lookup', primary: false },
+    { label: '🏢 GST by Name', text: '🏢 GST by Name', primary: false },
+    { label: '🪪 GST by PAN', text: '🪪 GST by PAN', primary: false },
+    { label: '📄 GST Details', text: '📄 GST Details', primary: false },
+    { label: '👥 Refer & Earn', text: '👥 Refer & Earn', primary: false },
+    { label: '💎 Redeem Code', text: '💎 Redeem Code', primary: false },
+    { label: '📊 My Profile', text: '📊 My Profile', primary: false },
+    { label: '❓ Help Guide', text: '❓ Help Guide', primary: false },
     { label: '✅ Verify Joined', text: '✅ Verify Joined', primary: false },
   ];
 
@@ -205,7 +209,7 @@ interface SimButton {
               target="_blank"
               rel="noopener noreferrer"
               className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40 flex items-center gap-1 font-mono hover:bg-sky-500/30 transition"
-              title="Join Channel (-1002085221963)"
+              title="Join Channel @RehuSzr"
             >
               <span>Join @RehuSzr</span>
             </a>

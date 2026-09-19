@@ -768,13 +768,13 @@ function getJoinReplyKeyboard() {
 function getMainReplyKeyboard() {
   return {
     keyboard: [
-      [{ text: "📱 Num2 Lookup" }, { text: "🚗 Vehicle Lookup" }],
-      [{ text: "🪪 Aadhar2Info" },    { text: "👪 Aadhar2Family" }],
-      [{ text: "🗳️ Voter Lookup" },   { text: "🔥 LPG Lookup" }],
-      [{ text: "💳 UPI2Num" },        { text: "🏢 GST2Name" }],
-      [{ text: "🪪 GST2PAN" },        { text: "📄 GST Details" }],
-      [{ text: "👥 Refer & Earn (+10 Daily)" }, { text: "💎 Redeem" }],
-      [{ text: "📊 My Stats" },       { text: "❓ Help" }]
+      [{ text: "📱 Mobile Lookup" }, { text: "🚗 Vehicle Lookup" }],
+      [{ text: "🪪 Aadhaar Info" },   { text: "👨‍👩‍👧 Family Tree" }],
+      [{ text: "🗳️ Voter Lookup" },  { text: "🔥 LPG Gas Lookup" }],
+      [{ text: "💳 UPI Lookup" },     { text: "🏢 GST by Name" }],
+      [{ text: "🪪 GST by PAN" },     { text: "📄 GST Details" }],
+      [{ text: "👥 Refer & Earn" },   { text: "💎 Redeem Code" }],
+      [{ text: "📊 My Profile" },     { text: "❓ Help Guide" }]
     ],
     resize_keyboard: true,
     is_persistent: true
@@ -1156,7 +1156,7 @@ All **${BOT_NAME} OSINT Intelligence Bot** services and investigation modules ar
 
 👇 *Select an option below or send a query to begin:*`;
       await sendTelegramMessage(chatId, welcome, getMainReplyKeyboard());
-      await sendTelegramMessage(chatId, getStartCard(user, cq.from?.first_name || 'Agent', userId), getMainInlineKeyboard());
+      await sendTelegramMessage(chatId, getStartCard(user, cq.from?.first_name || 'Agent', userId), getMainReplyKeyboard());
     } else {
       await answerTelegramCallbackQuery(cqId, "❌ Channel not joined yet! Please join first.", true);
       const reminder = `⚠️ *Channel Membership Not Found!*
@@ -1164,7 +1164,6 @@ All **${BOT_NAME} OSINT Intelligence Bot** services and investigation modules ar
 You have not joined our official intelligence updates channel yet:
 
 📢 *Official Channel:* [${CHANNEL_USERNAME}](${CHANNEL_LINK})
-🆔 *Channel ID:* \`${CHANNEL_ID}\`
 
 1️⃣ Click the channel link above and join.
 2️⃣ After joining, tap the **✅ Verify Joined** button below to activate access.`;
@@ -1189,7 +1188,7 @@ You have not joined our official intelligence updates channel yet:
       user.pendingAction = undefined;
       await answerTelegramCallbackQuery(cqId, "Main Dashboard");
       const card = getStartCard(user, cq.from?.first_name || 'Agent', userId);
-      await sendTelegramMessage(chatId, card, getMainInlineKeyboard());
+      await sendTelegramMessage(chatId, card, getMainReplyKeyboard());
       return;
     }
 
@@ -1225,7 +1224,7 @@ You have not joined our official intelligence updates channel yet:
 └ 🔗 Personal Link: \`https://t.me/${BOT_USERNAME}?start=ref_${userId}\`
 ══════════════════════════
 💡 *Tip:* Earn +10 extra searches every day for every referral invited with /refer!`;
-      await sendTelegramMessage(chatId, statsText, getMainInlineKeyboard());
+      await sendTelegramMessage(chatId, statsText, getMainReplyKeyboard());
       return;
     }
 
@@ -1249,7 +1248,7 @@ Tap any service button directly, or send slash commands:
 • 💎 \`/redeem <code>\` ➜ Activate premium license
 • 📊 \`/stats\` ➜ View quota & usage
 • ✅ \`/verify\` ➜ Re-check channel membership`;
-      await sendTelegramMessage(chatId, help, getMainInlineKeyboard());
+      await sendTelegramMessage(chatId, help, getMainReplyKeyboard());
       return;
     }
 
@@ -1317,7 +1316,7 @@ Your daily allowance has been permanently upgraded!`;
 
   // If user opens channel link
   if (text === "📢 Open Channel Link") {
-    await sendTelegramMessage(chatId, `📢 *Official Channel:* [${CHANNEL_USERNAME}](${CHANNEL_LINK})\n🆔 Channel ID: \`${CHANNEL_ID}\``, getJoinInlineKeyboard());
+    await sendTelegramMessage(chatId, `📢 *Official Channel:* [${CHANNEL_USERNAME}](${CHANNEL_LINK})`, getJoinInlineKeyboard());
     return;
   }
 
@@ -1332,11 +1331,10 @@ Your daily allowance has been permanently upgraded!`;
 Channel Membership Status: ✅ *VERIFIED*
 
 Official Channel: [${CHANNEL_USERNAME}](${CHANNEL_LINK})
-Channel ID: \`${CHANNEL_ID}\`
 
 Welcome to **${BOT_NAME} OSINT Bot**! All investigation modules are unlocked.`;
       await sendTelegramMessage(chatId, successMsg, getMainReplyKeyboard());
-      await sendTelegramMessage(chatId, getStartCard(user, msg.from?.first_name || 'Agent', userId), getMainInlineKeyboard());
+      await sendTelegramMessage(chatId, getStartCard(user, msg.from?.first_name || 'Agent', userId), getMainReplyKeyboard());
     } else {
       const failMsg = `❌ *Channel Verification Failed!*
 ══════════════════════════
@@ -1360,7 +1358,6 @@ ${CHANNEL_LINK}
 To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is mandatory:
 
 📢 *Official Channel:* [${CHANNEL_USERNAME}](${CHANNEL_LINK})
-🆔 *Channel ID:* \`${CHANNEL_ID}\`
 
 1️⃣ Tap the button below to join the channel.
 2️⃣ Tap **✅ Verify Joined** to unlock the bot immediately.
@@ -1376,42 +1373,42 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
   if (text === "/start" || text === "🏠 Main Menu") {
     const card = getStartCard(user, msg.from?.first_name || 'Agent', userId);
     await sendTelegramMessage(chatId, card, getMainReplyKeyboard());
-    await sendTelegramMessage(chatId, `⚡ *Quick Action Dashboard:*\nTap any button below to launch an instant search:`, getMainInlineKeyboard());
     return;
   }
 
-  if (text === "👥 Refer & Earn (+10 Daily)" || text === "👥 Refer & Earn" || text.startsWith("/refer") || text.toLowerCase() === "refer") {
+  if (text === "👥 Refer & Earn" || text === "👥 Refer & Earn (+10 Daily)" || text.startsWith("/refer") || text.toLowerCase() === "refer") {
     const referCard = getReferralCard(user, userId);
     await sendTelegramMessage(chatId, referCard, getReferInlineKeyboard(userId));
     return;
   }
 
-  if (text === "/help" || text === "❓ Help") {
+  if (text === "/help" || text === "❓ Help" || text === "❓ Help Guide") {
     const help = `📖 *${BOT_NAME} — Help & Command Guide*
 ══════════════════════════
-*ONE-TAP LOOKUPS:*
-• 📱 *Num2 Lookup*  ➜ 10-digit Mobile Number
+*AVAILABLE OSINT SERVICES:*
+• 📱 *Mobile Lookup*  ➜ 10-digit Mobile Number
 • 🚗 *Vehicle Lookup*  ➜ Vehicle Reg Number
+• 🪪 *Aadhaar Info*  ➜ 12-digit Aadhaar Number
+• 👨‍👩‍👧 *Family Tree*  ➜ Household Family Tree
 • 🗳️ *Voter Lookup*  ➜ Voter EPIC Number
-• 🪪 *Aadhar2Info*  ➜ 12-digit Aadhaar Number
-• 👪 *Aadhar2Family*  ➜ Household Family Tree
-• 🔥 *LPG Lookup*  ➜ Gas Connection / Phone
-• 💳 *UPI2Num*  ➜ UPI VPA Handle
-• 🏢 *GST2Name*  ➜ Business Legal Name
-• 🪪 *GST2PAN*  ➜ 10-char PAN Number
+• 🔥 *LPG Gas Lookup*  ➜ Gas Connection / Phone
+• 💳 *UPI Lookup*  ➜ UPI VPA Handle
+• 🏢 *GST by Name*  ➜ Business Legal Name
+• 🪪 *GST by PAN*  ➜ 10-char PAN Number
 • 📄 *GST Details*  ➜ 15-char GSTIN Number
 
-*UTILITY & REWARDS:*
+*REWARDS & ACCOUNT:*
 • 👥 \`/refer\` ➜ Invite friends & earn *+10 searches daily*!
 • 💎 \`/redeem CODE\` ➜ Redeem voucher code
 • 📊 \`/stats\` ➜ Check daily usage limits
-• ✅ \`/verify\` ➜ Re-check channel status`;
+• ✅ \`/verify\` ➜ Re-check channel status
+
+👇 *Tap any button below to start:*`;
     await sendTelegramMessage(chatId, help, getMainReplyKeyboard());
-    await sendTelegramMessage(chatId, `🔍 Select a service:`, getMainInlineKeyboard());
     return;
   }
 
-  if (text === "/stats" || text === "📊 My Stats") {
+  if (text === "/stats" || text === "📊 My Stats" || text === "📊 My Profile") {
     const curLimit = getUserDailyLimit(user);
     const rem = getUserRemaining(user);
     const refCount = user.referralCount || 0;
@@ -1656,80 +1653,80 @@ Status: Unlimited lookups unlocked!`, getMainReplyKeyboard());
   }
 
   // ── KEYBOARD BUTTON ACTIONS (Prompts with Cancel button) ──
-  if (text === "📱 Num2 Lookup" || text.includes("Num2") || text.toLowerCase() === "mobile" || text.toLowerCase() === "phone") {
+  if (text === "📱 Mobile Lookup" || text === "📱 Num2 Lookup" || text.includes("Num2") || text.includes("Mobile") || text.toLowerCase() === "phone") {
     user.pendingAction = 'num2';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('num2'), getPromptInlineKeyboard('num2'));
+    await sendTelegramMessage(chatId, getPromptCard('num2'), getCancelKeyboard());
     return;
   }
 
   if (text === "🚗 Vehicle Lookup" || text.includes("Vehicle") || text.toLowerCase() === "vehicle") {
     user.pendingAction = 'vehicle';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('vehicle'), getPromptInlineKeyboard('vehicle'));
+    await sendTelegramMessage(chatId, getPromptCard('vehicle'), getCancelKeyboard());
     return;
   }
 
   if (text === "🗳️ Voter Lookup" || text.includes("Voter") || text.toLowerCase() === "voter") {
     user.pendingAction = 'voter';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('voter'), getPromptInlineKeyboard('voter'));
+    await sendTelegramMessage(chatId, getPromptCard('voter'), getCancelKeyboard());
     return;
   }
 
-  if (text === "🪪 Aadhar2Info" || text.toLowerCase() === "aadhar" || text.toLowerCase() === "aadhaar") {
+  if (text === "🪪 Aadhaar Info" || text === "🪪 Aadhar2Info" || text.includes("Aadhar") || text.includes("Aadhaar")) {
     user.pendingAction = 'aadhar2info';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('aadhar2info'), getPromptInlineKeyboard('aadhar2info'));
+    await sendTelegramMessage(chatId, getPromptCard('aadhar2info'), getCancelKeyboard());
     return;
   }
 
-  if (text === "👪 Aadhar2Family") {
+  if (text === "👨‍👩‍👧 Family Tree" || text === "👪 Aadhar2Family" || text.includes("Family")) {
     user.pendingAction = 'aadhar2family';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('aadhar2family'), getPromptInlineKeyboard('aadhar2family'));
+    await sendTelegramMessage(chatId, getPromptCard('aadhar2family'), getCancelKeyboard());
     return;
   }
 
-  if (text === "🔥 LPG Lookup" || text.includes("LPG") || text.toLowerCase() === "lpg") {
+  if (text === "🔥 LPG Gas Lookup" || text === "🔥 LPG Lookup" || text.includes("LPG") || text.toLowerCase() === "lpg") {
     user.pendingAction = 'lpg';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('lpg'), getPromptInlineKeyboard('lpg'));
+    await sendTelegramMessage(chatId, getPromptCard('lpg'), getCancelKeyboard());
     return;
   }
 
-  if (text === "💳 UPI2Num" || text.toLowerCase() === "upi") {
+  if (text === "💳 UPI Lookup" || text === "💳 UPI2Num" || text.includes("UPI") || text.toLowerCase() === "upi") {
     user.pendingAction = 'upi2num';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('upi2num'), getPromptInlineKeyboard('upi2num'));
+    await sendTelegramMessage(chatId, getPromptCard('upi2num'), getCancelKeyboard());
     return;
   }
 
-  if (text === "🏢 GST2Name") {
+  if (text === "🏢 GST by Name" || text === "🏢 GST2Name" || text.includes("GST by Name") || text.includes("GST2Name")) {
     user.pendingAction = 'gst2name';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('gst2name'), getPromptInlineKeyboard('gst2name'));
+    await sendTelegramMessage(chatId, getPromptCard('gst2name'), getCancelKeyboard());
     return;
   }
 
-  if (text === "🪪 GST2PAN") {
+  if (text === "🪪 GST by PAN" || text === "🪪 GST2PAN" || text.includes("GST by PAN") || text.includes("GST2PAN")) {
     user.pendingAction = 'gst2pan';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('gst2pan'), getPromptInlineKeyboard('gst2pan'));
+    await sendTelegramMessage(chatId, getPromptCard('gst2pan'), getCancelKeyboard());
     return;
   }
 
-  if (text === "📄 GST Details" || text.toLowerCase() === "gst") {
+  if (text === "📄 GST Details" || text === "📄 GSTIN Profile" || text.includes("GST Details") || text.includes("GSTIN Profile") || text.toLowerCase() === "gst") {
     user.pendingAction = 'gst';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('gst'), getPromptInlineKeyboard('gst'));
+    await sendTelegramMessage(chatId, getPromptCard('gst'), getCancelKeyboard());
     return;
   }
 
-  if (text === "💎 Redeem") {
+  if (text === "💎 Redeem Code" || text === "💎 Redeem" || text.includes("Redeem")) {
     user.pendingAction = 'redeem';
     await sendTelegramChatAction(chatId, "typing");
-    await sendTelegramMessage(chatId, getPromptCard('redeem'), getPromptInlineKeyboard('redeem'));
+    await sendTelegramMessage(chatId, getPromptCard('redeem'), getCancelKeyboard());
     return;
   }
 
@@ -1906,8 +1903,7 @@ You have used up your free daily search allowance.
     return;
   }
 
-  await sendTelegramMessage(chatId, `👋 Send /help to see all available lookup commands or tap an option below:`, getMainReplyKeyboard());
-  await sendTelegramMessage(chatId, `🔍 *Quick Services Menu:*`, getMainInlineKeyboard());
+  await sendTelegramMessage(chatId, `👋 Tap any service button below or send /help to view command list:`, getMainReplyKeyboard());
 }
 
 function clean(str: string): string {
@@ -2160,21 +2156,21 @@ async function startServer() {
       user.pendingAction = undefined;
       return res.json({
         verified: true,
-        reply: `🎉 *VERIFICATION SUCCESSFUL!*\n══════════════════════════\nChannel Membership Confirmed for [${CHANNEL_USERNAME}](${CHANNEL_LINK})!\n\n🆔 *Channel ID:* \`${CHANNEL_ID}\`\nStatus: 🟢 *UNLOCKED*\n\nAb aap kisi bhi button par click karke direct lookup run kar sakte hain!\n• 📱 *Num2 Lookup* (Mobile number)\n• 🚗 *Vehicle Lookup* (RC details)\n• 🗳️ *Voter Lookup* (EPIC card)\n• 🪪 *Aadhar2Info* (12-digit Aadhaar)`,
+        reply: `🎉 *VERIFICATION SUCCESSFUL!*\n══════════════════════════\nChannel Membership Confirmed for [${CHANNEL_USERNAME}](${CHANNEL_LINK})!\n\nStatus: 🟢 *UNLOCKED*\n\nAb aap kisi bhi button par click karke direct lookup run kar sakte hain!\n• 📱 *Mobile Lookup* (Mobile number)\n• 🚗 *Vehicle Lookup* (RC details)\n• 🗳️ *Voter Lookup* (EPIC card)\n• 🪪 *Aadhaar Info* (12-digit Aadhaar)`,
         awaitingInput: false,
       });
     }
 
     if (text === "📢 Join Channel" || text === "📢 Open Channel Link") {
       return res.json({
-        reply: `📢 *Official Channel Link:*\n👉 [${CHANNEL_USERNAME}](${CHANNEL_LINK})\n🆔 Channel ID: \`${CHANNEL_ID}\`\n\nChannel join karne ke baad **✅ Verify Joined** button dabayein.`,
+        reply: `📢 *Official Channel Link:*\n👉 [${CHANNEL_USERNAME}](${CHANNEL_LINK})\n\nChannel join karne ke baad **✅ Verify Joined** button dabayein.`,
       });
     }
 
     if (!isCurrentlyVerified) {
       return res.json({
         needsVerification: true,
-        reply: `🔒 *ACCESS RESTRICTED — MUST JOIN CHANNEL*\n══════════════════════════\nBot ko use karne ke liye pehle hamara official updates channel join karna zaroori hai:\n\n📢 *Official Channel:* [${CHANNEL_USERNAME}](${CHANNEL_LINK})\n🆔 *Channel ID:* \`${CHANNEL_ID}\`\n\n1️⃣ Upar diye gaye link par click karke channel join karein.\n2️⃣ Phir **✅ Verify Joined** button dabayein.\n══════════════════════════`,
+        reply: `🔒 *ACCESS RESTRICTED — MUST JOIN CHANNEL*\n══════════════════════════\nBot ko use karne ke liye pehle hamara official updates channel join karna zaroori hai:\n\n📢 *Official Channel:* [${CHANNEL_USERNAME}](${CHANNEL_LINK})\n\n1️⃣ Upar diye gaye link par click karke channel join karein.\n2️⃣ Phir **✅ Verify Joined** button dabayein.\n══════════════════════════`,
       });
     }
 
