@@ -174,6 +174,19 @@ interface SimButton {
       { label: '❌ Cancel', text: '❌ Cancel', cancel: true },
       { label: '💎 IRAMPREMIUM2026', text: 'IRAMPREMIUM2026', primary: true },
     ],
+    gst2name: [
+      { label: '❌ Cancel', text: '❌ Cancel', cancel: true },
+      { label: '🏢 Reliance (Demo)', text: 'Reliance', primary: true },
+      { label: '🏢 Tata Motors', text: 'Tata Motors' },
+    ],
+    gst2pan: [
+      { label: '❌ Cancel', text: '❌ Cancel', cancel: true },
+      { label: '🪪 AAACF5317Q (Demo)', text: 'AAACF5317Q', primary: true },
+    ],
+    gst: [
+      { label: '❌ Cancel', text: '❌ Cancel', cancel: true },
+      { label: '📄 27AAACF5317Q1ZA (Demo)', text: '27AAACF5317Q1ZA', primary: true },
+    ],
   };
 
   const currentButtons = awaitingInput && pendingButtons[awaitingInput]
