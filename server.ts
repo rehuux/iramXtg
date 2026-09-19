@@ -40,7 +40,7 @@ const GST_API_URL        = "https://pan-2jzn.onrender.com/gstin/";
 
 const BOT_NAME         = "iramX";
 const BOT_VERSION      = "7.3";
-const BOT_USERNAME     = "rehuXosint_bot";
+const BOT_USERNAME     = process.env.BOT_USERNAME || "irammbot";
 const DEVELOPER        = "@gotweeds";
 const DEVELOPER_LINK   = "https://t.me/gotweeds";
 const CHANNEL_ID       = process.env.CHANNEL_ID || "-1002085221963";
@@ -230,7 +230,7 @@ async function fetchWithTimeout(url: string, timeoutMs = 25000): Promise<any> {
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; iramX/7.3; +https://t.me/rehuXosint_bot)' }
+      headers: { 'User-Agent': `Mozilla/5.0 (compatible; iramX/7.3; +https://t.me/${BOT_USERNAME})` }
     });
     clearTimeout(timeoutId);
     if (!response.ok) {

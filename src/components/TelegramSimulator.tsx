@@ -255,7 +255,7 @@ interface SimButton {
               <span>iramX Bot</span>
               <span className="text-[10px] text-emerald-400 font-mono">bot</span>
             </div>
-            <div className="text-[10px] text-slate-400">@rehuXosint_bot</div>
+            <div className="text-[10px] text-slate-400">@irammbot</div>
           </div>
         </div>
 

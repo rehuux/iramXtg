@@ -36,7 +36,7 @@ export default function App() {
   const [config, setConfig] = useState<BotConfig>({
     botName: 'iramX',
     botVersion: '7.3',
-    botUsername: 'rehuXosint_bot',
+    botUsername: 'irammbot',
     developer: '@gotweeds',
     developerLink: 'https://t.me/gotweeds',
     channelId: '-1002085221963',
