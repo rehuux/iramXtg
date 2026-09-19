@@ -2,10 +2,29 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const PORT = 3000;
 const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID, 10) : 5225326313;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+// ── SUPABASE PERSISTENCE CONFIGURATION ──
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+
+let supabase: SupabaseClient | null = null;
+if (SUPABASE_URL && SUPABASE_KEY) {
+  try {
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { persistSession: false },
+    });
+    console.log('✅ Connected to Supabase! User data & credits are permanently persisted.');
+  } catch (err) {
+    console.error('⚠️ Supabase connection initialization error:', err);
+  }
+} else {
+  console.log('ℹ️ Supabase not configured in environment. To persist users & credits across Render restarts, set SUPABASE_URL & SUPABASE_KEY.');
+}
 
 // ── API ENDPOINTS ──
 const NUM2_API_URL       = "https://rehu-hitek.vercel.app/search?mobile=";
@@ -60,6 +79,73 @@ const usersStore = new Map<string, UserRecord>();
 const redeemCodes = new Map<string, RedeemCodeRecord>();
 let allTimeSearchesCount = 142;
 
+// ── SUPABASE SYNCHRONIZATION HELPERS ──
+async function loadUsersFromSupabase(): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { data, error } = await supabase.from('bot_users').select('*');
+    if (error) {
+      console.error('⚠️ Supabase fetch error:', error.message);
+      return;
+    }
+    if (data && Array.isArray(data)) {
+      for (const row of data) {
+        usersStore.set(row.id, {
+          userId: row.id,
+          role: row.role || 'free',
+          dailySearches: Number(row.daily_searches) || 0,
+          lastSearchDate: row.last_search_date || getTodayString(),
+          totalSearches: Number(row.total_searches) || 0,
+          channelVerified: Boolean(row.channel_verified),
+          referredBy: row.referred_by || undefined,
+          referralCount: Number(row.referral_count) || 0,
+          referralBonusDaily: Number(row.referral_bonus_daily) || 0,
+          referredUsers: [],
+        });
+      }
+      console.log(`📦 Loaded & restored ${data.length} users from Supabase permanent database.`);
+    }
+  } catch (err: any) {
+    console.error('⚠️ Error querying Supabase on boot:', err?.message || err);
+  }
+}
+
+async function persistUser(user: UserRecord): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('bot_users').upsert({
+      id: String(user.userId),
+      role: user.role,
+      daily_searches: user.dailySearches,
+      last_search_date: user.lastSearchDate,
+      total_searches: user.totalSearches,
+      channel_verified: user.channelVerified,
+      referred_by: user.referredBy || null,
+      referral_count: user.referralCount || 0,
+      referral_bonus_daily: user.referralBonusDaily || 0,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+    if (error) {
+      console.error(`⚠️ Failed to persist user ${user.userId} to Supabase:`, error.message);
+    }
+  } catch (err: any) {
+    console.error(`⚠️ Supabase persist exception for user ${user.userId}:`, err?.message || err);
+  }
+}
+
+async function recordReferralInDb(referrerId: string, referredId: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.from('bot_referrals').insert({
+      referrer_id: String(referrerId),
+      referred_id: String(referredId),
+      created_at: new Date().toISOString()
+    });
+  } catch (err) {
+    // Ignore duplicate key errors if already recorded
+  }
+}
+
 // Seed initial test redeem codes
 function seedRedeemCode(code: string, days = 7, uses = 10, role = "premium") {
   redeemCodes.set(code.toUpperCase(), {
@@ -110,9 +196,11 @@ function getUser(userId: string | number): UserRecord {
       referredUsers: [],
     };
     usersStore.set(idStr, user);
+    persistUser(user).catch(() => {});
   } else if (user.lastSearchDate !== today) {
     user.dailySearches = 0;
     user.lastSearchDate = today;
+    persistUser(user).catch(() => {});
   }
   return user;
 }
@@ -122,6 +210,7 @@ function recordSearch(userId: string | number): void {
   user.dailySearches += 1;
   user.totalSearches += 1;
   allTimeSearchesCount += 1;
+  persistUser(user).catch(() => {});
 }
 
 function generateCode(length = 12): string {
@@ -758,23 +847,23 @@ function getReferralCard(user: UserRecord, userId: string | number): string {
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
 🎁 *EARN +10 EXTRA SEARCHES DAILY PER INVITE!*
 
-Apne friends aur groups me bot invite link share karein. Har ek user jo aapke link se join karega, aapko *+10 extra daily credits* milenge!
+Share your personal invite link with friends and groups. For every user who joins through your link, you earn *+10 extra daily credits* permanently!
 
-🔗 *Aapka Personal Referral Link:*
+🔗 *Your Personal Referral Link:*
 \`${refLink}\`
 _(Tap link above to copy)_
 
-📊 *Aapka Referral Dashboard:*
+📊 *Your Referral Dashboard:*
 ├ 👥 *Invited Friends:* \`${count} Agents\`
 ├ 🎁 *Daily Bonus Quota:* \`+${bonus} searches/day\`
 ├ ⚡ *Total Daily Limit:* \`${currentLimit} searches/day\`
 └ 🔥 *Searches Left Today:* \`${remaining} / ${currentLimit}\`
 
 ───────────────────────────────
-💡 *Kaise Kaam Karta Hai:*
-1️⃣ Upar diye gaye link ko copy karke dosto ya Telegram groups me share karein.
-2️⃣ Jaise hi naya banda bot start karega, aapko turant *+10 extra searches daily* jud jayenge!
-3️⃣ Unlimited invites = Unlimited daily searches!`;
+💡 *How It Works:*
+1️⃣ Copy your invite link above and share it with friends or in Telegram groups.
+2️⃣ As soon as someone launches the bot via your link, *+10 extra daily searches* are automatically added to your account!
+3️⃣ Unlimited invites = Unlimited daily OSINT lookups!`;
 }
 
 function getResultInlineKeyboard(type: string, query?: string) {
@@ -1054,30 +1143,31 @@ async function handleTelegramCallbackQuery(cq: any) {
     if (check.isMember) {
       const user = getUser(userId);
       user.channelVerified = true;
+      persistUser(user).catch(() => {});
       await answerTelegramCallbackQuery(cqId, "✅ Verification Successful! Access Unlocked.", true);
-      const welcome = `🎉 *CHANNEL VERIFIED SUCCESSFULLY!*
+      const welcome = `🎉 *CHANNEL MEMBERSHIP VERIFIED!*
 ══════════════════════════
-Thank you for joining [${CHANNEL_USERNAME}](${CHANNEL_LINK})!
+Thank you for subscribing to [${CHANNEL_USERNAME}](${CHANNEL_LINK})!
 
 Status: 🟢 *ACCESS GRANTED*
-Role: 💎 \`${user.role.toUpperCase()}\`
+License Tier: 💎 \`${user.role.toUpperCase()}\`
 
-Ab aap **${BOT_NAME} OSINT Intelligence Bot** ke sabhi commands bina kisi rukawat ke use kar sakte hain.
+All **${BOT_NAME} OSINT Intelligence Bot** services and investigation modules are unlocked.
 
-👇 *Niche diye gaye options me se select karein ya command bhejein:*`;
+👇 *Select an option below or send a query to begin:*`;
       await sendTelegramMessage(chatId, welcome, getMainReplyKeyboard());
       await sendTelegramMessage(chatId, getStartCard(user, cq.from?.first_name || 'Agent', userId), getMainInlineKeyboard());
     } else {
-      await answerTelegramCallbackQuery(cqId, "❌ Channel abhi tak join nahi hua! Pehle join karein.", true);
+      await answerTelegramCallbackQuery(cqId, "❌ Channel not joined yet! Please join first.", true);
       const reminder = `⚠️ *Channel Membership Not Found!*
 ══════════════════════════
-Aapne abhi tak hamara official updates channel join nahi kiya hai:
+You have not joined our official intelligence updates channel yet:
 
 📢 *Official Channel:* [${CHANNEL_USERNAME}](${CHANNEL_LINK})
 🆔 *Channel ID:* \`${CHANNEL_ID}\`
 
-1️⃣ Upar link par click karke channel join karein.
-2️⃣ Phir **✅ Verify Joined** button dabayein.`;
+1️⃣ Click the channel link above and join.
+2️⃣ After joining, tap the **✅ Verify Joined** button below to activate access.`;
       await sendTelegramMessage(chatId, reminder, getJoinInlineKeyboard());
     }
     return;
@@ -1130,11 +1220,11 @@ Aapne abhi tak hamara official updates channel join nahi kiya hai:
 └ 📊 Lifetime Searches: \`${user.totalSearches}\` queries
 
 👥 *REFERRAL REWARD SYSTEM*
-├ 👥 Invited Friends: \`${refCount} Agents\`
+├ 👥 Invited Members: \`${refCount} Agents\`
 ├ 🎁 Daily Bonus: \`+${refBonus} searches/day\`
 └ 🔗 Personal Link: \`https://t.me/${BOT_USERNAME}?start=ref_${userId}\`
 ══════════════════════════
-💡 *Tip:* Har invite par +10 extra searches rozana paayein!`;
+💡 *Tip:* Earn +10 extra searches every day for every referral invited with /refer!`;
       await sendTelegramMessage(chatId, statsText, getMainInlineKeyboard());
       return;
     }
@@ -1205,16 +1295,20 @@ async function handleTelegramUpdate(msg: any) {
           referrer.referralCount = (referrer.referralCount || 0) + 1;
           referrer.referralBonusDaily = (referrer.referralCount || 0) * REFERRAL_BONUS_PER_USER;
 
+          persistUser(referrer).catch(() => {});
+          persistUser(user).catch(() => {});
+          recordReferralInDb(refId, String(userId)).catch(() => {});
+
           // Alert referrer on Telegram immediately
           const refNotice = `🎉 *NEW REFERRAL JOINED!*
 ══════════════════════════
-👋 Agent *${msg.from?.first_name || 'Agent'}* (\`${userId}\`) ne aapke invite link se join kiya!
+👋 Agent *${msg.from?.first_name || 'Agent'}* (\`${userId}\`) joined using your personal invite link!
 
 🎁 *Reward:* \`+10 Extra Searches Daily\`
-👥 *Total Referrals:* \`${referrer.referralCount} Agents\`
+👥 *Total Referrals:* \`${referrer.referralCount} Members\`
 ⚡ *New Daily Limit:* \`${getUserDailyLimit(referrer)}\` searches/day!
 ══════════════════════════
-Aapka daily quota automatically upgrade ho gaya hai!`;
+Your daily allowance has been permanently upgraded!`;
           sendTelegramMessage(refId, refNotice, getReferInlineKeyboard(refId)).catch(() => {});
         }
       }
@@ -1232,25 +1326,26 @@ Aapka daily quota automatically upgrade ho gaya hai!`;
     const check = await checkTelegramChannelMembership(userId);
     if (check.isMember) {
       user.channelVerified = true;
+      persistUser(user).catch(() => {});
       const successMsg = `🎉 *VERIFICATION CONFIRMED!*
 ══════════════════════════
-Aapka channel membership status: ✅ *VERIFIED*
+Channel Membership Status: ✅ *VERIFIED*
 
 Official Channel: [${CHANNEL_USERNAME}](${CHANNEL_LINK})
 Channel ID: \`${CHANNEL_ID}\`
 
-Welcome to **${BOT_NAME} OSINT Bot**! Ab aap koi bhi lookup bina kisi rok-tok use kar sakte hain.`;
+Welcome to **${BOT_NAME} OSINT Bot**! All investigation modules are unlocked.`;
       await sendTelegramMessage(chatId, successMsg, getMainReplyKeyboard());
       await sendTelegramMessage(chatId, getStartCard(user, msg.from?.first_name || 'Agent', userId), getMainInlineKeyboard());
     } else {
-      const failMsg = `❌ *Channel Join Verification Failed!*
+      const failMsg = `❌ *Channel Verification Failed!*
 ══════════════════════════
-Aapne abhi tak [${CHANNEL_USERNAME}](${CHANNEL_LINK}) join nahi kiya hai.
+You have not joined [${CHANNEL_USERNAME}](${CHANNEL_LINK}) yet.
 
-👉 Step 1: Link par click karke channel join karein:
+👉 Step 1: Click the link to join our official channel:
 ${CHANNEL_LINK}
 
-👉 Step 2: Join karne ke baad **✅ Verify Channel Membership** par click karein.`;
+👉 Step 2: After joining, tap **✅ Verify Channel Membership** to activate your bot.`;
       await sendTelegramMessage(chatId, failMsg, getJoinInlineKeyboard());
     }
     return;
@@ -1262,18 +1357,19 @@ ${CHANNEL_LINK}
     if (!check.isMember) {
       const lockMsg = `🔒 *ACCESS RESTRICTED — CHANNEL JOIN REQUIRED*
 ══════════════════════════
-Bot ko use karne ke liye pehle hamara official updates channel join karna zaroori hai:
+To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is mandatory:
 
 📢 *Official Channel:* [${CHANNEL_USERNAME}](${CHANNEL_LINK})
 🆔 *Channel ID:* \`${CHANNEL_ID}\`
 
-1️⃣ Niche diye gaye link se channel join karein.
-2️⃣ Join karne ke baad **✅ Verify Joined** button dabayein.
+1️⃣ Tap the button below to join the channel.
+2️⃣ Tap **✅ Verify Joined** to unlock the bot immediately.
 ══════════════════════════`;
       await sendTelegramMessage(chatId, lockMsg, getJoinInlineKeyboard());
       return;
     }
     user.channelVerified = true;
+    persistUser(user).catch(() => {});
   }
 
   // If verified, proceed with all bot commands
@@ -1357,6 +1453,7 @@ Bot ko use karne ke liye pehle hamara official updates channel join karna zaroor
     }
     voucher.usesLeft -= 1;
     user.role = 'premium';
+    persistUser(user).catch(() => {});
     await sendTelegramMessage(chatId, `🎉 *Code Redeemed!*
 ══════════════════════════
 Role: 💎 PREMIUM ACTIVATED
@@ -1380,13 +1477,13 @@ Status: Unlimited lookups unlocked!`, getMainReplyKeyboard());
       user.pendingAction = undefined;
       await sendTelegramMessage(chatId, `🔒 *Daily Limit Reached!* (${dailyLimit} searches/day)
 ══════════════════════════
-Aapka daily free search quota khatam ho chuka hai.
+You have used up your free daily search allowance.
 
 🎁 *Earn +10 Extra Searches Daily:*
-Apne dosto ko bot me invite karein! Har referral pe aapko *+10 extra searches rozana* milenge!
+Invite colleagues or friends to use the bot! Each successful referral permanently grants you *+10 extra daily searches*!
 👉 Send \`/refer\` to get your personal invite link.
 
-💎 Ya fir \`/redeem CODE\` se premium unlimited access unlock karein.`, getMainReplyKeyboard());
+💎 Or send \`/redeem CODE\` to activate VIP unlimited access.`, getMainReplyKeyboard());
       return;
     }
 
@@ -1548,6 +1645,7 @@ Tap *❌ Cancel* to return.`, getCancelKeyboard());
       }
       voucher.usesLeft -= 1;
       user.role = 'premium';
+      persistUser(user).catch(() => {});
       await sendTelegramMessage(chatId, `🎉 *VOUCHER REDEEMED!*
 ══════════════════════════
 Role: 💎 PREMIUM ACTIVATED
@@ -1639,11 +1737,11 @@ Status: Unlimited lookups unlocked!`, getMainReplyKeyboard());
   if (remaining <= 0) {
     await sendTelegramMessage(chatId, `🔒 *Daily Limit Reached!* (${dailyLimit} searches/day)
 ══════════════════════════
-Aapka daily free quota khatam ho chuka hai.
+You have used up your free daily search allowance.
 
 🎁 *Earn +10 Extra Searches Daily:*
-👉 Send \`/refer\` to invite friends and permanently boost your daily searches by *+10 credits each*!
-💎 Ya fir \`/redeem CODE\` use karein.`, getMainReplyKeyboard());
+👉 Send \`/refer\` to invite friends and permanently boost your daily search limit by *+10 credits each*!
+💎 Or send \`/redeem CODE\` for unlimited VIP access.`, getMainReplyKeyboard());
     return;
   }
 
@@ -1818,6 +1916,9 @@ function clean(str: string): string {
 
 // ── EXPRESS APP ──
 async function startServer() {
+  // Restore persistent users from Supabase if configured
+  await loadUsersFromSupabase();
+
   const app = express();
   app.use(cors());
   app.use(express.json());
@@ -1829,6 +1930,7 @@ async function startServer() {
       message: "🤖 Bot is alive! Running smoothly.",
       botRunning: isTelegramPolling,
       version: BOT_VERSION,
+      databaseConnected: Boolean(supabase),
     });
   });
 
@@ -1845,6 +1947,7 @@ async function startServer() {
       channelLink: CHANNEL_LINK,
       supportGroup: SUPPORT_GROUP,
       telegramActive: Boolean(BOT_TOKEN),
+      databaseConnected: Boolean(supabase),
     });
   });
 
