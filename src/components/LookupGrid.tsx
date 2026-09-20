@@ -9,7 +9,8 @@ import {
   Building2,
   FileSpreadsheet,
   FileText,
-  BadgePercent
+  BadgePercent,
+  Ban
 } from 'lucide-react';
 import type { LookupType, LookupOption, BotButton } from '../types';
 
@@ -128,10 +129,9 @@ export const LookupGrid: React.FC<LookupGridProps> = ({ selectedType, onSelectTy
     }
   };
 
-  // If dynamic buttons are supplied, merge with base options or render enabled buttons
+  // If dynamic buttons are supplied, merge with base options or render buttons (all visible)
   const displayOptions: LookupOption[] = buttons && buttons.length > 0
     ? buttons
-        .filter((b) => b.enabled)
         .map((b) => {
           const matched = LOOKUP_OPTIONS.find((o) => o.id === b.id);
           return {
@@ -142,7 +142,7 @@ export const LookupGrid: React.FC<LookupGridProps> = ({ selectedType, onSelectTy
             example: b.example || (matched ? matched.example : ''),
             description: b.description || (matched ? matched.description : ''),
             category: (b.category as any) || 'custom',
-            enabled: b.enabled,
+            enabled: b.enabled !== false,
             apiUrl: b.apiUrl,
             isCustom: b.isCustom,
           };
@@ -153,30 +153,44 @@ export const LookupGrid: React.FC<LookupGridProps> = ({ selectedType, onSelectTy
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
       {displayOptions.map((item) => {
         const isSelected = selectedType === item.id;
+        const isDisabled = item.enabled === false;
         return (
           <button
             key={item.id}
             id={`tab-${item.id}`}
             onClick={() => onSelectType(item.id)}
             className={`p-3 rounded-xl border text-left transition relative overflow-hidden group cursor-pointer ${
-              isSelected
-                ? 'bg-indigo-600/15 border-indigo-500 text-indigo-200 shadow-md shadow-indigo-500/10'
-                : 'bg-slate-900/60 hover:bg-slate-800/80 border-slate-800 text-slate-400 hover:text-slate-200'
+              isDisabled
+                ? isSelected
+                  ? 'bg-rose-950/20 border-rose-500/80 text-rose-200'
+                  : 'bg-slate-900/40 hover:bg-slate-900/60 border-rose-900/30 text-slate-500 hover:text-slate-400'
+                : isSelected
+                  ? 'bg-indigo-600/15 border-indigo-500 text-indigo-200 shadow-md shadow-indigo-500/10'
+                  : 'bg-slate-900/60 hover:bg-slate-800/80 border-slate-800 text-slate-400 hover:text-slate-200'
             }`}
           >
             {isSelected && (
-              <div className="absolute top-0 right-0 w-2 h-2 rounded-full bg-indigo-400 m-2" />
+              <div className={`absolute top-0 right-0 w-2 h-2 rounded-full m-2 ${isDisabled ? 'bg-rose-400' : 'bg-indigo-400'}`} />
             )}
-            <div className={`p-2 rounded-lg inline-flex mb-2 ${
-              isSelected ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-800 text-slate-400 group-hover:text-slate-200'
-            }`}>
-              {getIcon(item.icon)}
+            <div className="flex items-center justify-between mb-2">
+              <div className={`p-2 rounded-lg inline-flex ${
+                isDisabled
+                  ? isSelected ? 'bg-rose-900/30 text-rose-300' : 'bg-slate-800/80 text-rose-400/70'
+                  : isSelected ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-800 text-slate-400 group-hover:text-slate-200'
+              }`}>
+                {getIcon(item.icon)}
+              </div>
+              {isDisabled && (
+                <span className="text-[9px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 uppercase">
+                  OFF
+                </span>
+              )}
             </div>
-            <div className="font-semibold text-xs sm:text-sm text-slate-100 mb-0.5 truncate">
-              {item.title}
+            <div className="font-semibold text-xs sm:text-sm text-slate-100 mb-0.5 truncate flex items-center gap-1">
+              <span>{item.title}</span>
             </div>
             <div className="text-[11px] text-slate-400 line-clamp-1">
-              {item.placeholder.replace('Enter ', '')}
+              {isDisabled ? 'Disabled by admin' : item.placeholder.replace('Enter ', '')}
             </div>
           </button>
         );

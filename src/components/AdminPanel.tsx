@@ -148,7 +148,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
           prev.map((b) => (b.id === btnId ? { ...b, label: editLabel.trim(), apiUrl: editApiUrl.trim(), placeholder: editPlaceholder.trim() } : b))
         );
         setEditingButtonId(null);
-        setButtonActionMsg({ type: 'success', text: `Button API and details updated successfully!` });
+        setButtonActionMsg({ type: 'success', text: `Button "${editLabel.trim()}" name & API details updated successfully!` });
         if (onButtonsUpdated) onButtonsUpdated();
       } else {
         setButtonActionMsg({ type: 'error', text: data.error || 'Failed to update button.' });
@@ -707,7 +707,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Turn buttons ON/OFF anytime, update endpoint API URLs instantly, or add new OSINT buttons without restarting bot.
+                Rename any button label, turn buttons ON/OFF (disabled buttons stay visible to users but show a disabled message), update API endpoints, or add custom OSINT buttons in real time.
               </p>
             </div>
           </div>
@@ -893,47 +893,56 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                       </div>
 
                       {isEditing ? (
-                        <div className="space-y-2 pt-2">
+                        <div className="space-y-2 pt-2 bg-slate-900/80 p-3 rounded-xl border border-indigo-500/40">
+                          <div className="text-[11px] font-semibold text-indigo-300 flex items-center gap-1.5">
+                            <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Rename Button & Configure API</span>
+                          </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             <div>
-                              <label className="text-[10px] text-slate-400 block">Label:</label>
+                              <label className="text-[10px] text-slate-300 font-medium block">
+                                Button Name / Label:
+                              </label>
                               <input
                                 type="text"
                                 value={editLabel}
                                 onChange={(e) => setEditLabel(e.target.value)}
-                                className="w-full bg-slate-900 text-white text-xs px-2.5 py-1.5 rounded border border-indigo-500 focus:outline-none"
+                                placeholder="e.g. 📱 Mobile Lookup 2.0"
+                                className="w-full bg-slate-950 text-white font-medium text-xs px-2.5 py-1.5 rounded border border-indigo-500 focus:outline-none"
                               />
                             </div>
                             <div>
-                              <label className="text-[10px] text-slate-400 block">Placeholder:</label>
+                              <label className="text-[10px] text-slate-300 font-medium block">Search Input Placeholder:</label>
                               <input
                                 type="text"
                                 value={editPlaceholder}
                                 onChange={(e) => setEditPlaceholder(e.target.value)}
-                                className="w-full bg-slate-900 text-white text-xs px-2.5 py-1.5 rounded border border-indigo-500 focus:outline-none"
+                                placeholder="e.g. Enter 10-digit mobile number"
+                                className="w-full bg-slate-950 text-white text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
                               />
                             </div>
                           </div>
                           <div>
-                            <label className="text-[10px] text-slate-400 block">API Endpoint URL:</label>
+                            <label className="text-[10px] text-slate-300 font-medium block">API Endpoint URL:</label>
                             <input
                               type="url"
                               value={editApiUrl}
                               onChange={(e) => setEditApiUrl(e.target.value)}
-                              className="w-full bg-slate-900 text-white font-mono text-xs px-2.5 py-1.5 rounded border border-indigo-500 focus:outline-none"
+                              placeholder="https://api.example.com/search?query="
+                              className="w-full bg-slate-950 text-white font-mono text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
                             />
                           </div>
                           <div className="flex items-center gap-2 pt-1">
                             <button
                               onClick={() => handleSaveEdit(btn.id)}
-                              disabled={savingButton}
-                              className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
+                              disabled={savingButton || !editLabel.trim()}
+                              className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white text-xs font-semibold cursor-pointer transition"
                             >
                               {savingButton ? 'Saving...' : 'Save Changes'}
                             </button>
                             <button
                               onClick={() => setEditingButtonId(null)}
-                              className="px-3 py-1 rounded bg-slate-800 text-slate-300 hover:text-white text-xs"
+                              className="px-3 py-1.5 rounded bg-slate-800 text-slate-300 hover:text-white text-xs cursor-pointer transition"
                             >
                               Cancel
                             </button>
@@ -964,10 +973,11 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
 
                         <button
                           onClick={() => handleStartEdit(btn)}
-                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs transition cursor-pointer"
-                          title="Edit API endpoint and details"
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs transition cursor-pointer"
+                          title="Rename button or change API endpoint"
                         >
-                          <Edit3 className="w-3.5 h-3.5" />
+                          <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Rename / API</span>
                         </button>
 
                         {btn.isCustom && (

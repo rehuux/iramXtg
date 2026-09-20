@@ -181,6 +181,7 @@ interface SimButton {
   primary?: boolean;
   cancel?: boolean;
   admin?: boolean;
+  disabled?: boolean;
 }
 
   const defaultButtons: SimButton[] = [
@@ -256,43 +257,50 @@ interface SimButton {
     ],
   };
 
-  // Compute dynamic simulator buttons taking into account enabled/disabled states and custom buttons
+  // Compute dynamic simulator buttons taking into account enabled/disabled states, updated labels and custom buttons
   const computedDefaultButtons: SimButton[] = (() => {
     if (!dynamicButtons || dynamicButtons.length === 0) {
       return defaultButtons;
     }
 
-    // Filter out disabled base buttons
-    const activeBaseButtons = defaultButtons.filter((btn) => {
-      // Map label or text to button id
-      const lookupMap: Record<string, string> = {
-        '📱 Mobile Lookup': 'num2',
-        '🚗 Vehicle Lookup': 'vehicle',
-        '🪪 Aadhaar Info': 'aadhar2info',
-        '👨‍👩‍👧 Family Tree': 'aadhar2family',
-        '🗳️ Voter Lookup': 'voter',
-        '🔥 LPG Gas Lookup': 'lpg',
-        '💳 UPI Lookup': 'upi2num',
-        '🏢 GST by Name': 'gst2name',
-        '🪪 GST by PAN': 'gst2pan',
-        '📄 GST Details': 'gst',
-      };
+    const lookupMap: Record<string, string> = {
+      '📱 Mobile Lookup': 'num2',
+      '🚗 Vehicle Lookup': 'vehicle',
+      '🪪 Aadhaar Info': 'aadhar2info',
+      '👨‍👩‍👧 Family Tree': 'aadhar2family',
+      '🗳️ Voter Lookup': 'voter',
+      '🔥 LPG Gas Lookup': 'lpg',
+      '💳 UPI Lookup': 'upi2num',
+      '🏢 GST by Name': 'gst2name',
+      '🪪 GST by PAN': 'gst2pan',
+      '📄 GST Details': 'gst',
+    };
+
+    // Update base buttons with dynamic label & enabled status (all buttons remain visible)
+    const processedBaseButtons = defaultButtons.map((btn) => {
       const btnId = lookupMap[btn.text];
-      if (!btnId) return true; // Keep utility buttons like Admin, Profile, Redeem
+      if (!btnId) return btn;
       const match = dynamicButtons.find((b) => b.id === btnId);
-      return match ? match.enabled : true;
+      if (!match) return btn;
+      return {
+        ...btn,
+        label: match.enabled ? match.label : `${match.label} [OFF]`,
+        text: match.label,
+        disabled: !match.enabled,
+      };
     });
 
-    // Append enabled custom buttons added by Admin
-    const customActive = dynamicButtons
-      .filter((b) => b.isCustom && b.enabled)
+    // Append custom buttons (all visible)
+    const customButtons = dynamicButtons
+      .filter((b) => b.isCustom)
       .map((b) => ({
-        label: b.label,
+        label: b.enabled ? b.label : `${b.label} [OFF]`,
         text: b.label,
         primary: false,
+        disabled: !b.enabled,
       }));
 
-    return [...activeBaseButtons, ...customActive];
+    return [...processedBaseButtons, ...customButtons];
   })();
 
   const currentButtons = awaitingInput && pendingButtons[awaitingInput]
@@ -423,6 +431,8 @@ interface SimButton {
             className={`px-2.5 py-1 rounded-lg text-xs whitespace-nowrap transition cursor-pointer font-medium flex items-center gap-1 ${
               btn.cancel
                 ? 'bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300'
+                : btn.disabled
+                ? 'bg-rose-950/40 hover:bg-rose-950/60 border border-rose-800/40 text-rose-300/80'
                 : btn.admin
                 ? 'bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 font-semibold shadow-sm'
                 : btn.primary

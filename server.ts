@@ -946,18 +946,17 @@ function getJoinReplyKeyboard() {
 function getMainReplyKeyboard(user?: any) {
   const isAdmin = user && (String(user.id) === String(ADMIN_USER_ID) || user.role === 'admin');
   
-  // Get all currently enabled buttons from buttonsStore
-  const activeButtons = Array.from(buttonsStore.values())
-    .filter(b => b.enabled !== false)
+  // Get all registered buttons from buttonsStore (visible even if disabled)
+  const allButtons = Array.from(buttonsStore.values())
     .sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
 
   const rows: Array<Array<{ text: string }>> = [];
   
-  // Group active service buttons in pairs of 2
-  for (let i = 0; i < activeButtons.length; i += 2) {
-    const row: Array<{ text: string }> = [{ text: activeButtons[i].label }];
-    if (i + 1 < activeButtons.length) {
-      row.push({ text: activeButtons[i + 1].label });
+  // Group buttons in pairs of 2
+  for (let i = 0; i < allButtons.length; i += 2) {
+    const row: Array<{ text: string }> = [{ text: allButtons[i].label }];
+    if (i + 1 < allButtons.length) {
+      row.push({ text: allButtons[i + 1].label });
     }
     rows.push(row);
   }
@@ -1763,16 +1762,19 @@ Telegram keyboard auto-sync ho gaya hai.
 • 📌 *Example:* \`${btn.example || 'None'}\`
 • 🏷️ *Type:* ${btn.isCustom ? "Custom Button" : "Built-in System Button"}
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-💡 *API Change Command:*
-\`/setapi ${btn.id} <new_api_url>\``;
+💡 *Quick Admin Commands:*
+• Rename: \`/rename ${btn.id} <New Name>\`
+• Change API: \`/setapi ${btn.id} <new_api_url>\`
+• Toggle: \`/toggle ${btn.id}\``;
 
       const actionRows: Array<Array<{ text: string; callback_data: string }>> = [
         [
           { text: btn.enabled ? "🔴 Turn OFF" : "🟢 Turn ON", callback_data: `admin_btn_toggle_${btn.id}` },
-          { text: "✏️ Change API URL", callback_data: `admin_btn_editapi_${btn.id}` }
+          { text: "🏷️ Rename Button", callback_data: `admin_btn_editname_${btn.id}` }
         ],
         [
-          { text: "🔙 Back to Buttons List", callback_data: "admin_buttons_list" }
+          { text: "✏️ Change API URL", callback_data: `admin_btn_editapi_${btn.id}` },
+          { text: "🔙 Back to List", callback_data: "admin_buttons_list" }
         ]
       ];
 
@@ -1781,6 +1783,26 @@ Telegram keyboard auto-sync ho gaya hai.
       } else {
         await sendTelegramMessage(chatId, infoCard, { inline_keyboard: actionRows });
       }
+      return;
+    }
+
+    if (data.startsWith("admin_btn_editname_")) {
+      const targetBtnId = data.replace("admin_btn_editname_", "");
+      const btn = buttonsStore.get(targetBtnId);
+      if (!btn) {
+        await answerTelegramCallbackQuery(cqId, "Button not found!", true);
+        return;
+      }
+      user.pendingAction = `admin_edit_name_${targetBtnId}`;
+      await answerTelegramCallbackQuery(cqId, "Send new Button Name");
+      await sendTelegramMessage(chatId, `🏷️ *RENAME BUTTON:* \`${btn.label}\` (\`${btn.id}\`)
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Current Label: \`${btn.label}\`
+
+👉 Please type and send the **NEW BUTTON NAME / LABEL** now:
+*(Example: \`📱 Contact Search\` or \`🔍 Mobile 2.0\`)*
+
+*(Or send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
       return;
     }
 
@@ -2026,6 +2048,42 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
     return;
   }
 
+  // ── TELEGRAM ADMIN RENAME BUTTON PENDING ACTION ──
+  if (user.pendingAction?.startsWith('admin_edit_name_') && isAdmin) {
+    const targetBtnId = user.pendingAction.replace('admin_edit_name_', '');
+    user.pendingAction = undefined;
+
+    if (text === "❌ Cancel" || text === "/cancel") {
+      await sendTelegramMessage(chatId, "🔙 Operation cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+
+    const newName = text.trim();
+    if (!newName || newName.length < 2) {
+      await sendTelegramMessage(chatId, `⚠️ *Button label is too short!*\nPlease provide a valid button name.`, getMainReplyKeyboard(user));
+      return;
+    }
+
+    const btn = buttonsStore.get(targetBtnId);
+    if (!btn) {
+      await sendTelegramMessage(chatId, `❌ Button \`${targetBtnId}\` not found.`, getMainReplyKeyboard(user));
+      return;
+    }
+
+    const oldLabel = btn.label;
+    btn.label = newName;
+    await persistButton(btn);
+
+    await sendTelegramMessage(chatId, `✅ *BUTTON RENAMED SUCCESSFULLY!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+• 🆔 *Button ID:* \`${btn.id}\`
+• 🔴 *Old Name:* \`${oldLabel}\`
+• 🟢 *New Name:* \`${newName}\`
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Telegram keyboard & website interface updated with the new button name! 🎉`, getMainReplyKeyboard(user));
+    return;
+  }
+
   // ── TELEGRAM ADMIN EDIT API PENDING ACTION ──
   if (user.pendingAction?.startsWith('admin_edit_api_') && isAdmin) {
     const targetBtnId = user.pendingAction.replace('admin_edit_api_', '');
@@ -2256,7 +2314,7 @@ Naya button Telegram keyboard aur website dono par automatically live ho chuka h
       { text: "➕ Add New Custom Button", callback_data: "admin_btn_add_prompt" },
       { text: "🔙 Back to Admin Panel", callback_data: "admin_back_to_panel" }
     ]);
-    const buttonsMsg = `🎛️ *BOT BUTTONS & APIS MASTER MANAGER*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSelect any button below to toggle ON/OFF or change its API URL:`;
+    const buttonsMsg = `🎛️ *BOT BUTTONS & APIS MASTER MANAGER*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSelect any button below to Rename, Toggle ON/OFF, or change its API URL:\n\n💡 *Quick commands:*\n• \`/rename <id> <New Name>\`\n• \`/toggle <id>\`\n• \`/setapi <id> <url>\``;
     await sendTelegramMessage(chatId, buttonsMsg, { inline_keyboard: keyboardRows });
     return;
   }
@@ -2291,6 +2349,27 @@ Naya button Telegram keyboard aur website dono par automatically live ho chuka h
     btn.enabled = !btn.enabled;
     await persistButton(btn);
     await sendTelegramMessage(chatId, `✅ *BUTTON STATUS TOGGLED!*\n\n\`${btn.label}\` is now *${btn.enabled ? "🟢 ENABLED (ON)" : "🔴 DISABLED (OFF)"}*.\nBot keyboard has been updated.`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && text.startsWith("/rename ")) {
+    const raw = text.replace("/rename ", "").trim();
+    const firstSpace = raw.indexOf(' ');
+    if (firstSpace === -1) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/rename <button_id> <New Button Name>\`\n\n*Example:*\n\`/rename num2 📱 Mobile 2.0\`\n\`/rename vehicle 🏎️ Fast RC\`\n\n*(Send /buttons to see all button IDs)*`, getMainReplyKeyboard(user));
+      return;
+    }
+    const btnId = raw.slice(0, firstSpace).trim();
+    const newName = raw.slice(firstSpace + 1).trim();
+    const btn = buttonsStore.get(btnId);
+    if (!btn) {
+      await sendTelegramMessage(chatId, `❌ Button with ID \`${btnId}\` not found.\nSend \`/buttons\` to inspect valid IDs.`, getMainReplyKeyboard(user));
+      return;
+    }
+    const oldName = btn.label;
+    btn.label = newName;
+    await persistButton(btn);
+    await sendTelegramMessage(chatId, `✅ *BUTTON RENAMED SUCCESSFULLY!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n• 🆔 *Button ID:* \`${btn.id}\`\n• 🔴 *Old Name:* \`${oldName}\`\n• 🟢 *New Name:* \`${newName}\`\n\nBot keyboard & website interface updated!`, getMainReplyKeyboard(user));
     return;
   }
 
