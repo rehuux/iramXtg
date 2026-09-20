@@ -6,7 +6,7 @@ import { ResultViewer } from './components/ResultViewer';
 import { RedeemModal } from './components/RedeemModal';
 import { AdminPanel } from './components/AdminPanel';
 import { TelegramSimulator } from './components/TelegramSimulator';
-import type { LookupType, SearchResult, StatsData, BotConfig } from './types';
+import type { LookupType, SearchResult, StatsData, BotConfig, BotButton, LookupOption } from './types';
 import { Terminal, Search, Shield, Sparkles, CheckCircle2, Send, Lock } from 'lucide-react';
 
 export default function App() {
@@ -18,6 +18,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'lookup' | 'telegram' | 'admin'>('lookup');
   const [isRedeemOpen, setIsRedeemOpen] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
+  const [buttons, setButtons] = useState<BotButton[]>([]);
 
   const [stats, setStats] = useState<StatsData>({
     totalUsers: 1,
@@ -46,7 +47,39 @@ export default function App() {
     telegramActive: false,
   });
 
-  const currentOption = LOOKUP_OPTIONS.find((o) => o.id === selectedType) || LOOKUP_OPTIONS[0];
+  const fetchButtons = async () => {
+    try {
+      const res = await fetch('/api/buttons');
+      const data = await res.json();
+      if (data.buttons) {
+        setButtons(data.buttons);
+      }
+    } catch (e) {
+      console.warn('Buttons fetch error:', e);
+    }
+  };
+
+  const dynamicCurrentOption: LookupOption = (() => {
+    const customMatch = buttons.find((b) => b.id === selectedType);
+    if (customMatch) {
+      const baseMatch = LOOKUP_OPTIONS.find((o) => o.id === selectedType);
+      return {
+        id: customMatch.id,
+        title: customMatch.label,
+        icon: baseMatch ? baseMatch.icon : 'BadgePercent',
+        placeholder: customMatch.placeholder || (baseMatch ? baseMatch.placeholder : `Enter ${customMatch.label}`),
+        example: customMatch.example || (baseMatch ? baseMatch.example : ''),
+        description: customMatch.description || (baseMatch ? baseMatch.description : ''),
+        category: (customMatch.category as any) || 'custom',
+        enabled: customMatch.enabled,
+        apiUrl: customMatch.apiUrl,
+        isCustom: customMatch.isCustom,
+      };
+    }
+    return LOOKUP_OPTIONS.find((o) => o.id === selectedType) || LOOKUP_OPTIONS[0];
+  })();
+
+  const currentOption = dynamicCurrentOption;
 
   const fetchStats = async () => {
     try {
@@ -71,6 +104,7 @@ export default function App() {
   useEffect(() => {
     fetchStats();
     fetchConfig();
+    fetchButtons();
   }, []);
 
   const handleSearch = async (overrideType?: LookupType, overrideQuery?: string) => {
@@ -268,6 +302,7 @@ export default function App() {
             {/* Category Selector Grid */}
             <LookupGrid
               selectedType={selectedType}
+              buttons={buttons}
               onSelectType={(type) => {
                 setSelectedType(type);
                 setQuery('');
@@ -296,6 +331,7 @@ export default function App() {
                 onTriggerLookup={handleTriggerFromTelegram}
                 channelVerified={stats.channelVerified}
                 onVerified={fetchStats}
+                buttons={buttons}
               />
             </div>
 
@@ -328,7 +364,12 @@ export default function App() {
         )}
 
         {activeTab === 'admin' && (
-          <AdminPanel stats={stats} config={config} onRefreshStats={fetchStats} />
+          <AdminPanel
+            stats={stats}
+            config={config}
+            onRefreshStats={fetchStats}
+            onButtonsUpdated={fetchButtons}
+          />
         )}
       </main>
 

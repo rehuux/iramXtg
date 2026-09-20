@@ -14,21 +14,56 @@ import {
   RadioTower,
   Clock,
   Award,
-  AlertCircle
+  AlertCircle,
+  ToggleLeft,
+  ToggleRight,
+  Edit3,
+  Plus,
+  Trash2,
+  Sliders,
+  CheckCircle,
+  Database,
+  Terminal,
+  Code
 } from 'lucide-react';
-import type { StatsData, BotConfig, RedeemCode } from '../types';
+import type { StatsData, BotConfig, RedeemCode, BotButton } from '../types';
 
 interface AdminPanelProps {
   stats: StatsData;
   config: BotConfig;
   onRefreshStats: () => void;
+  onButtonsUpdated?: () => void;
 }
 
-export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefreshStats }) => {
+export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefreshStats, onButtonsUpdated }) => {
   const [codes, setCodes] = useState<RedeemCode[]>([]);
   const [loadingCodes, setLoadingCodes] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  // Dynamic Buttons Management State
+  const [buttons, setButtons] = useState<BotButton[]>([]);
+  const [loadingButtons, setLoadingButtons] = useState(false);
+  const [editingButtonId, setEditingButtonId] = useState<string | null>(null);
+  const [editApiUrl, setEditApiUrl] = useState('');
+  const [editLabel, setEditLabel] = useState('');
+  const [editPlaceholder, setEditPlaceholder] = useState('');
+  const [savingButton, setSavingButton] = useState(false);
+  const [buttonActionMsg, setButtonActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // New Button Form State
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newLabel, setNewLabel] = useState('');
+  const [newApiUrl, setNewApiUrl] = useState('');
+  const [newCategory, setNewCategory] = useState<'vehicles' | 'identity' | 'telecom' | 'business' | 'custom'>('custom');
+  const [newPlaceholder, setNewPlaceholder] = useState('');
+  const [newExample, setNewExample] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [addingButton, setAddingButton] = useState(false);
+
+  // SQL Modal / View State
+  const [showSqlModal, setShowSqlModal] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
 
   // Generator parameters
   const [customDays, setCustomDays] = useState<number>(30);
@@ -45,6 +80,178 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
   const [announcementMsg, setAnnouncementMsg] = useState('');
   const [sendingAnnouncement, setSendingAnnouncement] = useState(false);
   const [announcementSuccess, setAnnouncementSuccess] = useState<string | null>(null);
+
+  const fetchButtons = async () => {
+    setLoadingButtons(true);
+    try {
+      const res = await fetch('/api/buttons');
+      const data = await res.json();
+      if (data.buttons) {
+        setButtons(data.buttons);
+      }
+    } catch (err) {
+      console.error('Failed to load buttons', err);
+    } finally {
+      setLoadingButtons(false);
+    }
+  };
+
+  const handleToggleButton = async (btn: BotButton) => {
+    try {
+      const res = await fetch('/api/admin/buttons/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: btn.id, enabled: !btn.enabled }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setButtons((prev) =>
+          prev.map((b) => (b.id === btn.id ? { ...b, enabled: !b.enabled } : b))
+        );
+        setButtonActionMsg({
+          type: 'success',
+          text: `"${btn.label}" button is now ${!btn.enabled ? 'ON (Active)' : 'OFF (Disabled)'}.`,
+        });
+        if (onButtonsUpdated) onButtonsUpdated();
+      } else {
+        setButtonActionMsg({ type: 'error', text: data.error || 'Failed to toggle button.' });
+      }
+    } catch (e: any) {
+      setButtonActionMsg({ type: 'error', text: e.message || 'Error toggling button.' });
+    }
+  };
+
+  const handleStartEdit = (btn: BotButton) => {
+    setEditingButtonId(btn.id);
+    setEditLabel(btn.label);
+    setEditApiUrl(btn.apiUrl || '');
+    setEditPlaceholder(btn.placeholder || '');
+  };
+
+  const handleSaveEdit = async (btnId: string) => {
+    setSavingButton(true);
+    setButtonActionMsg(null);
+    try {
+      const res = await fetch('/api/admin/buttons/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: btnId,
+          label: editLabel.trim(),
+          apiUrl: editApiUrl.trim(),
+          placeholder: editPlaceholder.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setButtons((prev) =>
+          prev.map((b) => (b.id === btnId ? { ...b, label: editLabel.trim(), apiUrl: editApiUrl.trim(), placeholder: editPlaceholder.trim() } : b))
+        );
+        setEditingButtonId(null);
+        setButtonActionMsg({ type: 'success', text: `Button API and details updated successfully!` });
+        if (onButtonsUpdated) onButtonsUpdated();
+      } else {
+        setButtonActionMsg({ type: 'error', text: data.error || 'Failed to update button.' });
+      }
+    } catch (e: any) {
+      setButtonActionMsg({ type: 'error', text: e.message || 'Error updating button.' });
+    } finally {
+      setSavingButton(false);
+    }
+  };
+
+  const handleAddNewButton = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newLabel.trim() || !newApiUrl.trim()) return;
+
+    setAddingButton(true);
+    setButtonActionMsg(null);
+    try {
+      const res = await fetch('/api/admin/buttons/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: newLabel.trim(),
+          apiUrl: newApiUrl.trim(),
+          category: newCategory,
+          placeholder: newPlaceholder.trim() || `Enter ${newLabel.trim()} query`,
+          example: newExample.trim(),
+          description: newDescription.trim() || `Custom OSINT lookup module for ${newLabel.trim()}`,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.button) {
+        setButtons((prev) => [...prev, data.button]);
+        setNewLabel('');
+        setNewApiUrl('');
+        setNewPlaceholder('');
+        setNewExample('');
+        setNewDescription('');
+        setShowAddForm(false);
+        setButtonActionMsg({ type: 'success', text: `🎉 New Button "${data.button.label}" added and active on Telegram & Web!` });
+        if (onButtonsUpdated) onButtonsUpdated();
+      } else {
+        setButtonActionMsg({ type: 'error', text: data.error || 'Failed to add new button.' });
+      }
+    } catch (e: any) {
+      setButtonActionMsg({ type: 'error', text: e.message || 'Error adding button.' });
+    } finally {
+      setAddingButton(false);
+    }
+  };
+
+  const handleDeleteButton = async (btn: BotButton) => {
+    if (!confirm(`Are you sure you want to delete "${btn.label}"? This will remove it from bot and web.`)) return;
+
+    try {
+      const res = await fetch(`/api/admin/buttons/${btn.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setButtons((prev) => prev.filter((b) => b.id !== btn.id));
+        setButtonActionMsg({ type: 'success', text: `Button "${btn.label}" deleted.` });
+        if (onButtonsUpdated) onButtonsUpdated();
+      } else {
+        setButtonActionMsg({ type: 'error', text: data.error || 'Failed to delete.' });
+      }
+    } catch (e: any) {
+      setButtonActionMsg({ type: 'error', text: e.message || 'Error deleting button.' });
+    }
+  };
+
+  const sqlCode = `-- SQL Commands to create bot_buttons table in Supabase
+-- Run this in your Supabase SQL Editor:
+
+CREATE TABLE IF NOT EXISTS bot_buttons (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  category TEXT DEFAULT 'custom',
+  api_url TEXT NOT NULL,
+  placeholder TEXT DEFAULT '',
+  example TEXT DEFAULT '',
+  description TEXT DEFAULT '',
+  enabled BOOLEAN DEFAULT true,
+  is_custom BOOLEAN DEFAULT false,
+  sort_order INT DEFAULT 99,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable Row Level Security (RLS)
+ALTER TABLE bot_buttons ENABLE ROW LEVEL SECURITY;
+
+-- Allow all operations for service_role or authenticated, and public read:
+CREATE POLICY "Public Read Bot Buttons" ON bot_buttons FOR SELECT USING (true);
+CREATE POLICY "Allow All Bot Buttons" ON bot_buttons FOR ALL USING (true);
+
+-- Optional: Create index on sort_order and enabled for rapid retrieval
+CREATE INDEX IF NOT EXISTS idx_bot_buttons_enabled ON bot_buttons (enabled);
+CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
+`;
+
+  const copySqlToClipboard = () => {
+    navigator.clipboard.writeText(sqlCode);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 2500);
+  };
 
   const fetchCodes = async () => {
     setLoadingCodes(true);
@@ -63,6 +270,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
 
   useEffect(() => {
     fetchCodes();
+    fetchButtons();
   }, []);
 
   const handleGenerateCodes = async () => {
@@ -483,6 +691,346 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
           </div>
         </form>
       </div>
+
+      {/* Section: Dynamic Button & API Management (Admin Control) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400">
+              <Sliders className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-semibold text-white">Bot Buttons & Custom APIs Manager</h4>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                  Live Sync
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Turn buttons ON/OFF anytime, update endpoint API URLs instantly, or add new OSINT buttons without restarting bot.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSqlModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-medium transition cursor-pointer"
+            >
+              <Database className="w-3.5 h-3.5 text-cyan-400" />
+              <span>SQL Commands</span>
+            </button>
+            <button
+              onClick={() => setShowAddForm(!showAddForm)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow transition cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>{showAddForm ? 'Close Form' : 'Add New Button'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Action message banner */}
+        {buttonActionMsg && (
+          <div
+            className={`p-3 rounded-xl text-xs flex items-center justify-between border ${
+              buttonActionMsg.type === 'success'
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+            }`}
+          >
+            <span>{buttonActionMsg.text}</span>
+            <button onClick={() => setButtonActionMsg(null)} className="text-slate-400 hover:text-white">
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Add New Button Form */}
+        {showAddForm && (
+          <form onSubmit={handleAddNewButton} className="bg-slate-950 p-4 rounded-xl border border-indigo-500/30 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-indigo-300 flex items-center gap-1.5">
+                <Plus className="w-4 h-4" /> Add Custom Button & API
+              </span>
+              <span className="text-[11px] text-slate-400">Instantly appears on Telegram Keyboard & Web</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-medium text-slate-300 block mb-1">Button Label (Text + Emoji):</label>
+                <input
+                  type="text"
+                  required
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  placeholder="e.g. 🔍 IMEI Tracker or 💳 PAN Details"
+                  className="w-full bg-slate-900 text-white text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-medium text-slate-300 block mb-1">Category:</label>
+                <select
+                  value={newCategory}
+                  onChange={(e) => setNewCategory(e.target.value as any)}
+                  className="w-full bg-slate-900 text-white text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-indigo-500 focus:outline-none"
+                >
+                  <option value="custom">Custom / Other</option>
+                  <option value="telecom">Telecom & Mobile</option>
+                  <option value="identity">Identity & Citizen</option>
+                  <option value="vehicles">Vehicles & Transport</option>
+                  <option value="business">Business & GST</option>
+                </select>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="text-[11px] font-medium text-slate-300 block mb-1">
+                  API Endpoint URL: <span className="text-slate-500 font-normal">(User input query will be appended at end)</span>
+                </label>
+                <input
+                  type="url"
+                  required
+                  value={newApiUrl}
+                  onChange={(e) => setNewApiUrl(e.target.value)}
+                  placeholder="e.g. https://api.example.com/search?query="
+                  className="w-full bg-slate-900 text-white font-mono text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-medium text-slate-300 block mb-1">Input Placeholder:</label>
+                <input
+                  type="text"
+                  value={newPlaceholder}
+                  onChange={(e) => setNewPlaceholder(e.target.value)}
+                  placeholder="e.g. Enter 15-digit IMEI number"
+                  className="w-full bg-slate-900 text-white text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-medium text-slate-300 block mb-1">Example Value:</label>
+                <input
+                  type="text"
+                  value={newExample}
+                  onChange={(e) => setNewExample(e.target.value)}
+                  placeholder="e.g. 864500000000000"
+                  className="w-full bg-slate-900 text-white text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="text-[11px] font-medium text-slate-300 block mb-1">Short Description:</label>
+                <input
+                  type="text"
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="e.g. Search device warranty, blacklisted status and TAC details."
+                  className="w-full bg-slate-900 text-white text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAddForm(false)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={addingButton}
+                className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white text-xs font-semibold transition"
+              >
+                {addingButton ? 'Adding Button...' : 'Save & Publish Button'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Buttons List Table */}
+        <div className="overflow-x-auto">
+          {loadingButtons ? (
+            <div className="py-8 text-center text-xs text-slate-400">Loading buttons registry...</div>
+          ) : buttons.length === 0 ? (
+            <div className="py-8 text-center text-xs text-slate-400">No buttons found. Click "Refresh All".</div>
+          ) : (
+            <div className="space-y-2">
+              {buttons.map((btn) => {
+                const isEditing = editingButtonId === btn.id;
+                return (
+                  <div
+                    key={btn.id}
+                    className={`p-3.5 rounded-xl border transition flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
+                      btn.enabled
+                        ? 'bg-slate-950/70 border-slate-800/80 hover:border-slate-700'
+                        : 'bg-slate-950/30 border-rose-900/30 opacity-75'
+                    }`}
+                  >
+                    <div className="flex-1 space-y-1 w-full md:w-auto">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-white">{btn.label}</span>
+                        <span className="text-[10px] px-2 py-0.2 rounded-full bg-slate-800 text-slate-400 font-mono">
+                          id: {btn.id}
+                        </span>
+                        <span
+                          className={`text-[10px] px-2 py-0.2 rounded-full font-semibold ${
+                            btn.enabled
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                          }`}
+                        >
+                          {btn.enabled ? '● ACTIVE' : '○ DISABLED (OFF)'}
+                        </span>
+                        {btn.isCustom && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            Custom
+                          </span>
+                        )}
+                      </div>
+
+                      {isEditing ? (
+                        <div className="space-y-2 pt-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-slate-400 block">Label:</label>
+                              <input
+                                type="text"
+                                value={editLabel}
+                                onChange={(e) => setEditLabel(e.target.value)}
+                                className="w-full bg-slate-900 text-white text-xs px-2.5 py-1.5 rounded border border-indigo-500 focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-400 block">Placeholder:</label>
+                              <input
+                                type="text"
+                                value={editPlaceholder}
+                                onChange={(e) => setEditPlaceholder(e.target.value)}
+                                className="w-full bg-slate-900 text-white text-xs px-2.5 py-1.5 rounded border border-indigo-500 focus:outline-none"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-slate-400 block">API Endpoint URL:</label>
+                            <input
+                              type="url"
+                              value={editApiUrl}
+                              onChange={(e) => setEditApiUrl(e.target.value)}
+                              className="w-full bg-slate-900 text-white font-mono text-xs px-2.5 py-1.5 rounded border border-indigo-500 focus:outline-none"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              onClick={() => handleSaveEdit(btn.id)}
+                              disabled={savingButton}
+                              className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
+                            >
+                              {savingButton ? 'Saving...' : 'Save Changes'}
+                            </button>
+                            <button
+                              onClick={() => setEditingButtonId(null)}
+                              className="px-3 py-1 rounded bg-slate-800 text-slate-300 hover:text-white text-xs"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-slate-400 font-mono break-all line-clamp-1">
+                          <span className="text-slate-500">API:</span> {btn.apiUrl || '(Built-in RTO scraper)'}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Controls for this button */}
+                    {!isEditing && (
+                      <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                        <button
+                          onClick={() => handleToggleButton(btn)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer border ${
+                            btn.enabled
+                              ? 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30'
+                              : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                          }`}
+                          title={btn.enabled ? 'Turn button OFF' : 'Turn button ON'}
+                        >
+                          {btn.enabled ? <ToggleRight className="w-4 h-4 text-emerald-400" /> : <ToggleLeft className="w-4 h-4 text-rose-400" />}
+                          <span>{btn.enabled ? 'Turn OFF' : 'Turn ON'}</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleStartEdit(btn)}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs transition cursor-pointer"
+                          title="Edit API endpoint and details"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+
+                        {btn.isCustom && (
+                          <button
+                            onClick={() => handleDeleteButton(btn)}
+                            className="p-1.5 rounded-lg bg-rose-900/20 hover:bg-rose-900/40 text-rose-400 hover:text-rose-300 border border-rose-800/40 text-xs transition cursor-pointer"
+                            title="Delete custom button"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* SQL Commands Modal */}
+      {showSqlModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-sm font-semibold text-white">Supabase SQL Schema Commands</h3>
+              </div>
+              <button onClick={() => setShowSqlModal(false)} className="text-slate-400 hover:text-white text-sm">
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Buttons aur APIs ki dynamic saving ke liye ye table <strong className="text-cyan-300">Supabase SQL Editor</strong> mein run karein:
+            </p>
+
+            <div className="relative">
+              <pre className="bg-slate-950 p-4 rounded-xl text-[11px] font-mono text-cyan-300 overflow-x-auto max-h-72 border border-slate-800">
+                {sqlCode}
+              </pre>
+              <button
+                onClick={copySqlToClipboard}
+                className="absolute top-2.5 right-2.5 flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold shadow transition cursor-pointer"
+              >
+                {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedSql ? 'Copied!' : 'Copy SQL'}</span>
+              </button>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setShowSqlModal(false)}
+                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium transition"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Telegram Bot Integration Card */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">

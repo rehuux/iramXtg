@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, RefreshCw, Sparkles, Terminal, Copy, Check } from 'lucide-react';
-import type { LookupType } from '../types';
+import type { LookupType, BotButton } from '../types';
 
 interface Message {
   sender: 'bot' | 'user';
@@ -60,12 +60,14 @@ interface TelegramSimulatorProps {
   onTriggerLookup: (type: LookupType, query: string) => void;
   channelVerified?: boolean;
   onVerified?: () => void;
+  buttons?: BotButton[];
 }
 
 export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   onTriggerLookup,
   channelVerified = false,
   onVerified,
+  buttons: propButtons,
 }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -79,8 +81,22 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   const [isVerified, setIsVerified] = useState(channelVerified);
   const [awaitingInput, setAwaitingInput] = useState<string | null>(null);
   const [placeholderText, setPlaceholderText] = useState('Tap 📱 Num2 Lookup or send command...');
+  const [dynamicButtons, setDynamicButtons] = useState<BotButton[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (propButtons && propButtons.length > 0) {
+      setDynamicButtons(propButtons);
+    } else {
+      fetch('/api/buttons')
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.buttons) setDynamicButtons(d.buttons);
+        })
+        .catch(() => {});
+    }
+  }, [propButtons]);
 
   useEffect(() => {
     setIsVerified(channelVerified);
@@ -179,6 +195,8 @@ interface SimButton {
     { label: '🪪 GST by PAN', text: '🪪 GST by PAN', primary: false },
     { label: '📄 GST Details', text: '📄 GST Details', primary: false },
     { label: '👑 Admin Control Panel', text: '👑 Admin Control Panel', admin: true },
+    { label: '👥 Registered Users', text: '/users', admin: true },
+    { label: '💎 VIP Users', text: '/premium_users', admin: true },
     { label: '👥 Refer & Earn', text: '👥 Refer & Earn', primary: false },
     { label: '💎 Redeem Code', text: '💎 Redeem Code', primary: false },
     { label: '📊 My Profile', text: '📊 My Profile', primary: false },
@@ -238,9 +256,48 @@ interface SimButton {
     ],
   };
 
+  // Compute dynamic simulator buttons taking into account enabled/disabled states and custom buttons
+  const computedDefaultButtons: SimButton[] = (() => {
+    if (!dynamicButtons || dynamicButtons.length === 0) {
+      return defaultButtons;
+    }
+
+    // Filter out disabled base buttons
+    const activeBaseButtons = defaultButtons.filter((btn) => {
+      // Map label or text to button id
+      const lookupMap: Record<string, string> = {
+        '📱 Mobile Lookup': 'num2',
+        '🚗 Vehicle Lookup': 'vehicle',
+        '🪪 Aadhaar Info': 'aadhar2info',
+        '👨‍👩‍👧 Family Tree': 'aadhar2family',
+        '🗳️ Voter Lookup': 'voter',
+        '🔥 LPG Gas Lookup': 'lpg',
+        '💳 UPI Lookup': 'upi2num',
+        '🏢 GST by Name': 'gst2name',
+        '🪪 GST by PAN': 'gst2pan',
+        '📄 GST Details': 'gst',
+      };
+      const btnId = lookupMap[btn.text];
+      if (!btnId) return true; // Keep utility buttons like Admin, Profile, Redeem
+      const match = dynamicButtons.find((b) => b.id === btnId);
+      return match ? match.enabled : true;
+    });
+
+    // Append enabled custom buttons added by Admin
+    const customActive = dynamicButtons
+      .filter((b) => b.isCustom && b.enabled)
+      .map((b) => ({
+        label: b.label,
+        text: b.label,
+        primary: false,
+      }));
+
+    return [...activeBaseButtons, ...customActive];
+  })();
+
   const currentButtons = awaitingInput && pendingButtons[awaitingInput]
-    ? [...pendingButtons[awaitingInput], ...defaultButtons]
-    : defaultButtons;
+    ? [...pendingButtons[awaitingInput], ...computedDefaultButtons]
+    : computedDefaultButtons;
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col h-[520px]">

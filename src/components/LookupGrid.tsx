@@ -11,7 +11,7 @@ import {
   FileText,
   BadgePercent
 } from 'lucide-react';
-import type { LookupType, LookupOption } from '../types';
+import type { LookupType, LookupOption, BotButton } from '../types';
 
 export const LOOKUP_OPTIONS: LookupOption[] = [
   {
@@ -109,9 +109,10 @@ export const LOOKUP_OPTIONS: LookupOption[] = [
 interface LookupGridProps {
   selectedType: LookupType;
   onSelectType: (type: LookupType) => void;
+  buttons?: BotButton[];
 }
 
-export const LookupGrid: React.FC<LookupGridProps> = ({ selectedType, onSelectType }) => {
+export const LookupGrid: React.FC<LookupGridProps> = ({ selectedType, onSelectType, buttons }) => {
   const getIcon = (iconName: string) => {
     switch (iconName) {
       case 'Car': return <Car className="w-5 h-5" />;
@@ -127,9 +128,30 @@ export const LookupGrid: React.FC<LookupGridProps> = ({ selectedType, onSelectTy
     }
   };
 
+  // If dynamic buttons are supplied, merge with base options or render enabled buttons
+  const displayOptions: LookupOption[] = buttons && buttons.length > 0
+    ? buttons
+        .filter((b) => b.enabled)
+        .map((b) => {
+          const matched = LOOKUP_OPTIONS.find((o) => o.id === b.id);
+          return {
+            id: b.id,
+            title: b.label,
+            icon: matched ? matched.icon : 'BadgePercent',
+            placeholder: b.placeholder || (matched ? matched.placeholder : `Enter ${b.label}`),
+            example: b.example || (matched ? matched.example : ''),
+            description: b.description || (matched ? matched.description : ''),
+            category: (b.category as any) || 'custom',
+            enabled: b.enabled,
+            apiUrl: b.apiUrl,
+            isCustom: b.isCustom,
+          };
+        })
+    : LOOKUP_OPTIONS;
+
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
-      {LOOKUP_OPTIONS.map((item) => {
+      {displayOptions.map((item) => {
         const isSelected = selectedType === item.id;
         return (
           <button

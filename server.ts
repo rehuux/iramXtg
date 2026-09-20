@@ -26,14 +26,156 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   console.log('ℹ️ Supabase not configured in environment. To persist users & credits across Render restarts, set SUPABASE_URL & SUPABASE_KEY.');
 }
 
-// ── API ENDPOINTS ──
+// ── DYNAMIC BOT BUTTONS & API CONFIGURATION ──
+export interface BotButton {
+  id: string; // e.g. 'num2', 'vehicle', or custom key
+  label: string; // e.g. '📱 Mobile Lookup'
+  category: 'telecom' | 'vehicles' | 'identity' | 'business' | 'custom';
+  apiUrl: string; // Dynamic target endpoint
+  placeholder: string;
+  example: string;
+  description: string;
+  enabled: boolean;
+  isCustom?: boolean;
+  sortOrder?: number;
+}
+
+const DEFAULT_BUTTONS: BotButton[] = [
+  {
+    id: 'num2',
+    label: '📱 Mobile Lookup',
+    category: 'telecom',
+    apiUrl: "https://rehu-hitek.vercel.app/search?mobile=",
+    placeholder: 'Enter 10-digit mobile number',
+    example: '6399964669',
+    description: 'Telecom database lookup for operator, subscriber and circle data.',
+    enabled: true,
+    sortOrder: 1,
+  },
+  {
+    id: 'vehicle',
+    label: '🚗 Vehicle Lookup',
+    category: 'vehicles',
+    apiUrl: "https://vehicle-deep.onrender.com/rc-search?registration_number=",
+    placeholder: 'Enter Vehicle Reg Number (e.g. HR26EV0001)',
+    example: 'HR26EV0001',
+    description: 'Owner name, chassis, engine, RTO code, fitness & insurance details.',
+    enabled: true,
+    sortOrder: 2,
+  },
+  {
+    id: 'aadhar2info',
+    label: '🪪 Aadhaar Info',
+    category: 'identity',
+    apiUrl: "https://rehu-hitek.vercel.app/search?field=aadharNumber&q=",
+    placeholder: 'Enter 12-digit Aadhaar number',
+    example: '646858617313',
+    description: 'Verify Aadhaar profile registration status and metadata.',
+    enabled: true,
+    sortOrder: 3,
+  },
+  {
+    id: 'aadhar2family',
+    label: '👨‍👩‍👧 Family Tree',
+    category: 'identity',
+    apiUrl: "https://aadhar2fam-black.vercel.app/get-family-by-aadhaar?key=IRAM&tkn=IRAM&aadhaar=",
+    placeholder: 'Enter 12-digit Aadhaar number',
+    example: '309484613752',
+    description: 'Discover linked family members and associated household records.',
+    enabled: true,
+    sortOrder: 4,
+  },
+  {
+    id: 'voter',
+    label: '🗳️ Voter Lookup',
+    category: 'identity',
+    apiUrl: "https://voter-rehuu.vercel.app/search?epic=",
+    placeholder: 'Enter EPIC number (e.g. ZNO1150077)',
+    example: 'ZNO1150077',
+    description: 'Electoral card details, assembly constituency, polling station.',
+    enabled: true,
+    sortOrder: 5,
+  },
+  {
+    id: 'lpg',
+    label: '🔥 LPG Gas Lookup',
+    category: 'telecom',
+    apiUrl: "https://lpg-rehu-lovat.vercel.app/validate?key=IRAM&tkn=IRAM&phone=",
+    placeholder: 'Enter 10-digit linked phone number',
+    example: '9546585647',
+    description: 'Consumer connection details from Indian Oil, Bharat Gas or HP Gas.',
+    enabled: true,
+    sortOrder: 6,
+  },
+  {
+    id: 'upi2num',
+    label: '💳 UPI Lookup',
+    category: 'telecom',
+    apiUrl: "https://paytm-seven-zeta.vercel.app/fetch?key=IRAM&tkn=IRAM&upi=",
+    placeholder: 'Enter UPI ID (e.g. username@bank)',
+    example: 'sagar5973@ptyes',
+    description: 'Resolve UPI virtual payment address to associated account or phone.',
+    enabled: true,
+    sortOrder: 7,
+  },
+  {
+    id: 'gst2name',
+    label: '🏢 GST by Name',
+    category: 'business',
+    apiUrl: "https://pan-2jzn.onrender.com/search-gstin?name=",
+    placeholder: 'Enter business or individual legal name',
+    example: 'RUBINA AKBARALI ANSARI',
+    description: 'Search active and cancelled GSTIN registrations by trade name.',
+    enabled: true,
+    sortOrder: 8,
+  },
+  {
+    id: 'gst2pan',
+    label: '🪪 GST by PAN',
+    category: 'business',
+    apiUrl: "https://pan-2jzn.onrender.com/pan/",
+    placeholder: 'Enter 10-character PAN number',
+    example: 'AXIPA2589D',
+    description: 'Locate all GSTIN accounts registered under a Permanent Account Number.',
+    enabled: true,
+    sortOrder: 9,
+  },
+  {
+    id: 'gst',
+    label: '📄 GST Details',
+    category: 'business',
+    apiUrl: "https://pan-2jzn.onrender.com/gstin/",
+    placeholder: 'Enter 15-character GSTIN',
+    example: '27AXIPA2589D1ZK',
+    description: 'Complete registration status, jurisdiction, tax payer type & address.',
+    enabled: true,
+    sortOrder: 10,
+  }
+];
+
+// Map storing buttons dynamically (can be modified, toggled, or extended via Admin Panel)
+const buttonsStore = new Map<string, BotButton>();
+DEFAULT_BUTTONS.forEach(btn => buttonsStore.set(btn.id, { ...btn }));
+
+function getButtonApiUrl(buttonId: string, fallback: string): string {
+  const btn = buttonsStore.get(buttonId);
+  return (btn && btn.apiUrl) ? btn.apiUrl : fallback;
+}
+
+function isButtonEnabled(buttonId: string): boolean {
+  const btn = buttonsStore.get(buttonId);
+  if (!btn) return true;
+  return btn.enabled !== false;
+}
+
+// Dynamic API URL accessors ensuring live updates from buttonsStore
 const NUM2_API_URL       = "https://rehu-hitek.vercel.app/search?mobile=";
+const VEHICLE_API_URL    = "https://vehicle-deep.onrender.com/rc-search?registration_number=";
 const AADHAR2_API_URL    = "https://rehu-hitek.vercel.app/search?field=aadharNumber&q=";
+const AADHAR2FAM_API_URL = "https://aadhar2fam-black.vercel.app/get-family-by-aadhaar?key=IRAM&tkn=IRAM&aadhaar=";
 const VOTER_API_URL      = "https://voter-rehuu.vercel.app/search?epic=";
 const LPG_API_URL        = "https://lpg-rehu-lovat.vercel.app/validate?key=IRAM&tkn=IRAM&phone=";
 const UPI2NUM_API_URL    = "https://paytm-seven-zeta.vercel.app/fetch?key=IRAM&tkn=IRAM&upi=";
-const AADHAR2FAM_API_URL = "https://aadhar2fam-black.vercel.app/get-family-by-aadhaar?key=IRAM&tkn=IRAM&aadhaar=";
-const VEHICLE_API_URL    = "https://vehicle-deep.onrender.com/rc-search?registration_number=";
 const GST2NAME_API_URL   = "https://pan-2jzn.onrender.com/search-gstin?name=";
 const GST2PAN_API_URL    = "https://pan-2jzn.onrender.com/pan/";
 const GST_API_URL        = "https://pan-2jzn.onrender.com/gstin/";
@@ -146,6 +288,70 @@ async function recordReferralInDb(referrerId: string, referredId: string): Promi
   }
 }
 
+// ── DYNAMIC BUTTONS SUPABASE PERSISTENCE ──
+async function loadButtonsFromSupabase(): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { data, error } = await supabase.from('bot_buttons').select('*').order('sort_order', { ascending: true });
+    if (error) {
+      console.warn('⚠️ Supabase bot_buttons fetch:', error.message);
+      return;
+    }
+    if (data && Array.isArray(data) && data.length > 0) {
+      for (const row of data) {
+        buttonsStore.set(row.id, {
+          id: row.id,
+          label: row.label,
+          category: row.category || 'custom',
+          apiUrl: row.api_url,
+          placeholder: row.placeholder || `Enter ${row.label}`,
+          example: row.example || '',
+          description: row.description || '',
+          enabled: row.enabled !== false,
+          isCustom: Boolean(row.is_custom),
+          sortOrder: row.sort_order || 99,
+        });
+      }
+      console.log(`📦 Loaded ${data.length} dynamic buttons & APIs from Supabase bot_buttons.`);
+    }
+  } catch (err: any) {
+    console.warn('⚠️ Error loading bot_buttons from Supabase:', err?.message || err);
+  }
+}
+
+async function persistButton(btn: BotButton): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('bot_buttons').upsert({
+      id: btn.id,
+      label: btn.label,
+      category: btn.category,
+      api_url: btn.apiUrl,
+      placeholder: btn.placeholder,
+      example: btn.example,
+      description: btn.description,
+      enabled: btn.enabled,
+      is_custom: Boolean(btn.isCustom),
+      sort_order: btn.sortOrder || 99,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+    if (error) {
+      console.warn(`⚠️ Failed to persist button ${btn.id} to Supabase:`, error.message);
+    }
+  } catch (err: any) {
+    console.warn(`⚠️ Supabase persist exception for button ${btn.id}:`, err?.message || err);
+  }
+}
+
+async function deleteButtonFromDb(buttonId: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.from('bot_buttons').delete().eq('id', buttonId);
+  } catch (err: any) {
+    console.warn(`⚠️ Supabase delete exception for button ${buttonId}:`, err?.message || err);
+  }
+}
+
 // Seed initial test redeem codes
 function seedRedeemCode(code: string, days = 7, uses = 1, role = "premium") {
   redeemCodes.set(code.toUpperCase(), {
@@ -251,7 +457,8 @@ async function fetchWithTimeout(url: string, timeoutMs = 25000): Promise<any> {
 
 async function fetchVehicleInfo(regNo: string) {
   const cleanReg = regNo.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-  const raw = await fetchWithTimeout(`${VEHICLE_API_URL}${encodeURIComponent(cleanReg)}`, 35000);
+  const vehicleUrl = getButtonApiUrl('vehicle', "https://vehicle-deep.onrender.com/rc-search?registration_number=");
+  const raw = await fetchWithTimeout(`${vehicleUrl}${encodeURIComponent(cleanReg)}`, 35000);
   if (!raw) return null;
 
   try {
@@ -738,20 +945,33 @@ function getJoinReplyKeyboard() {
 
 function getMainReplyKeyboard(user?: any) {
   const isAdmin = user && (String(user.id) === String(ADMIN_USER_ID) || user.role === 'admin');
-  const buttons = [
-    [{ text: "📱 Mobile Lookup" }, { text: "🚗 Vehicle Lookup" }],
-    [{ text: "🪪 Aadhaar Info" },   { text: "👨‍👩‍👧 Family Tree" }],
-    [{ text: "🗳️ Voter Lookup" },  { text: "🔥 LPG Gas Lookup" }],
-    [{ text: "💳 UPI Lookup" },     { text: "🏢 GST by Name" }],
-    [{ text: "🪪 GST by PAN" },     { text: "📄 GST Details" }],
-    [{ text: "👥 Refer & Earn" },   { text: "💎 Redeem Code" }],
-    [{ text: "📊 My Profile" },     { text: "❓ Help Guide" }]
-  ];
-  if (isAdmin) {
-    buttons.push([{ text: "👑 Admin Control Panel" }]);
+  
+  // Get all currently enabled buttons from buttonsStore
+  const activeButtons = Array.from(buttonsStore.values())
+    .filter(b => b.enabled !== false)
+    .sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
+
+  const rows: Array<Array<{ text: string }>> = [];
+  
+  // Group active service buttons in pairs of 2
+  for (let i = 0; i < activeButtons.length; i += 2) {
+    const row: Array<{ text: string }> = [{ text: activeButtons[i].label }];
+    if (i + 1 < activeButtons.length) {
+      row.push({ text: activeButtons[i + 1].label });
+    }
+    rows.push(row);
   }
+
+  // System navigation and utility buttons
+  rows.push([{ text: "👥 Refer & Earn" }, { text: "💎 Redeem Code" }]);
+  rows.push([{ text: "📊 My Profile" }, { text: "❓ Help Guide" }]);
+
+  if (isAdmin) {
+    rows.push([{ text: "👑 Admin Control Panel" }]);
+  }
+
   return {
-    keyboard: buttons,
+    keyboard: rows,
     resize_keyboard: true,
     is_persistent: true
   };
@@ -767,12 +987,23 @@ function getAdminInlineKeyboard(active: boolean) {
         }
       ],
       [
+        { text: "👥 Registered Users List", callback_data: "admin_list_users" },
+        { text: "💎 VIP Premium Users", callback_data: "admin_list_premium" }
+      ],
+      [
+        { text: "🚫 Revoke Premium (ID)", callback_data: "admin_remove_prem_prompt" },
+        { text: "➕ Grant Premium (ID)", callback_data: "admin_add_prem_prompt" }
+      ],
+      [
         { text: "🚀 Drop Code (7D)", callback_data: "admin_drop_7" },
         { text: "🚀 Drop Code (30D)", callback_data: "admin_drop_30" }
       ],
       [
         { text: "💎 Gen 30D VIP Code", callback_data: "admin_gen_30" },
         { text: "💎 Gen 365D VIP Code", callback_data: "admin_gen_365" }
+      ],
+      [
+        { text: "🎛️ Manage Bot Buttons & APIs", callback_data: "admin_buttons_list" }
       ],
       [
         { text: "📢 Broadcast Announcement", callback_data: "admin_broadcast_prompt" },
@@ -810,7 +1041,11 @@ function getAdminControlCard(active: boolean): string {
 • 🔑 *Active Redeem Vouchers:* \`${activeCodes}\`
 • 📢 *Official Channel:* \`${CHANNEL_USERNAME}\`
 
-⚡ *Admin Quick Commands:*
+⚡ *Admin Commands:*
+• \`/users\` ➜ Check total registered users list & details
+• \`/premium_users\` ➜ View all VIP Premium subscribers
+• \`/remove_premium <userId>\` ➜ Instantly revoke premium & demote to Free
+• \`/add_premium <userId>\` ➜ Manually grant VIP access to user
 • \`/bot on\` / \`/bot off\` ➜ Toggle bot power
 • \`/gen <days>\` ➜ Generate single-use key
 • \`/dropcode <days>\` ➜ Broadcast code drop to all users
@@ -1101,8 +1336,23 @@ Please send your *Promo / Voucher Code* to instantly unlock VIP Premium queries.
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 Send *❌ Cancel* to abort & return.`;
 
-    default:
+    default: {
+      const customBtn = buttonsStore.get(action);
+      if (customBtn) {
+        return `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
+┃   ${customBtn.label.toUpperCase()}
+╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
+👋 *Hello Agent!*
+
+Please send the query for *${customBtn.label}*.
+${customBtn.placeholder ? `\n💡 *Hint:* \`${customBtn.placeholder}\`` : ''}${customBtn.example ? `\n• *Example:* \`${customBtn.example}\`` : ''}
+${customBtn.description ? `\nℹ️ _${customBtn.description}_` : ''}
+
+───────────────────────────────
+Send *❌ Cancel* to abort & return.`;
+      }
       return `Please enter your query:`;
+    }
   }
 }
 
@@ -1355,9 +1605,250 @@ Tap any service button directly, or send slash commands:
       }
       return;
     }
+
+    if (data === "admin_list_users") {
+      await answerTelegramCallbackQuery(cqId, "Loading registered users...");
+      const allUsers = Array.from(usersStore.values());
+      const total = allUsers.length;
+      const prem = allUsers.filter(u => u.role === 'premium').length;
+      const free = allUsers.filter(u => u.role === 'free').length;
+
+      let msgText = `👥 *REGISTERED USERS DIRECTORY*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 Total Users: \`${total}\` | 💎 VIP: \`${prem}\` | 🆓 Free: \`${free}\`\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      const sample = allUsers.slice(-20).reverse();
+      sample.forEach((u, idx) => {
+        const roleIcon = u.role === 'admin' ? '👑' : u.role === 'premium' ? '💎' : '👤';
+        msgText += `${idx + 1}. ${roleIcon} ID: \`${u.userId}\` [${u.role.toUpperCase()}]\n   Searches: ${u.totalSearches} (Today: ${u.dailySearches}) | Invites: ${u.referralCount || 0}\n`;
+      });
+      if (total > 20) {
+        msgText += `\n*(Showing latest 20 of ${total} users)*`;
+      }
+      await sendTelegramMessage(chatId, msgText, getMainReplyKeyboard(user));
+      return;
+    }
+
+    if (data === "admin_list_premium") {
+      await answerTelegramCallbackQuery(cqId, "Loading VIP users...");
+      const premUsers = Array.from(usersStore.values()).filter(u => u.role === 'premium');
+      if (premUsers.length === 0) {
+        await sendTelegramMessage(chatId, `💎 *VIP PREMIUM USERS*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nNo active VIP premium users right now.\n\n👉 Grant with: \`/add_premium <userId>\`\n👉 Or drop code: \`/dropcode 30\``, getMainReplyKeyboard(user));
+        return;
+      }
+      let msgText = `💎 *VIP PREMIUM SUBSCRIBERS (${premUsers.length})*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      premUsers.forEach((u, idx) => {
+        msgText += `${idx + 1}. 💎 ID: \`${u.userId}\`\n   Total Searches: ${u.totalSearches} | Invites: ${u.referralCount || 0}\n   Remove: \`/remove_premium ${u.userId}\`\n`;
+      });
+      await sendTelegramMessage(chatId, msgText, getMainReplyKeyboard(user));
+      return;
+    }
+
+    if (data === "admin_remove_prem_prompt") {
+      user.pendingAction = 'admin_remove_premium';
+      await answerTelegramCallbackQuery(cqId, "Enter User ID to remove premium");
+      await sendTelegramMessage(chatId, `🚫 *REVOKE / REMOVE VIP PREMIUM*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nPlease type & send the *Telegram User ID* of the member whose VIP Premium access you want to revoke:\n\n💡 *Or use command directly:* \`/remove_premium <userId>\`\n\n*(Send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
+
+    if (data === "admin_add_prem_prompt") {
+      user.pendingAction = 'admin_add_premium';
+      await answerTelegramCallbackQuery(cqId, "Enter User ID to grant premium");
+      await sendTelegramMessage(chatId, `➕ *GRANT VIP PREMIUM ACCESS*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nPlease type & send the *Telegram User ID* to grant VIP Premium access:\n\n💡 *Or use command directly:* \`/add_premium <userId>\`\n\n*(Send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
+
+    // ── TELEGRAM ADMIN BUTTONS & API MANAGEMENT ──
+    if (data === "admin_buttons_list") {
+      await answerTelegramCallbackQuery(cqId, "Loading Buttons & APIs...");
+      const allButtons = Array.from(buttonsStore.values()).sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
+      
+      const keyboardRows: Array<Array<{ text: string; callback_data: string }>> = [];
+      
+      allButtons.forEach(btn => {
+        const statusIcon = btn.enabled ? "🟢" : "🔴";
+        keyboardRows.push([
+          { text: `${statusIcon} ${btn.label}`, callback_data: `admin_btn_view_${btn.id}` },
+          { text: btn.enabled ? "Turn OFF" : "Turn ON", callback_data: `admin_btn_toggle_${btn.id}` }
+        ]);
+      });
+
+      keyboardRows.push([
+        { text: "➕ Add New Custom Button", callback_data: "admin_btn_add_prompt" },
+        { text: "🔙 Back to Admin Panel", callback_data: "admin_back_to_panel" }
+      ]);
+
+      const buttonsMsg = `🎛️ *BOT BUTTONS & APIS MASTER MANAGER*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Yahan se aap kisi bhi button ko direct Telegram se:
+• 🟢 *Turn ON* ya 🔴 *Turn OFF* kar sakte hain.
+• 🔗 Uska *API Endpoint URL* change kar sakte hain.
+• ➕ *Naya Custom Button* aur API add kar sakte hain.
+
+👇 *Neeche button par tap karein to toggle ya edit karein:*`;
+
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, buttonsMsg, { inline_keyboard: keyboardRows });
+      } else {
+        await sendTelegramMessage(chatId, buttonsMsg, { inline_keyboard: keyboardRows });
+      }
+      return;
+    }
+
+    if (data === "admin_back_to_panel") {
+      await answerTelegramCallbackQuery(cqId, "Returning to Admin Panel");
+      const adminCard = getAdminControlCard(isBotActive);
+      const adminMarkup = getAdminInlineKeyboard(isBotActive);
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, adminCard, adminMarkup);
+      } else {
+        await sendTelegramMessage(chatId, adminCard, adminMarkup);
+      }
+      return;
+    }
+
+    if (data.startsWith("admin_btn_toggle_")) {
+      const targetBtnId = data.replace("admin_btn_toggle_", "");
+      const btn = buttonsStore.get(targetBtnId);
+      if (!btn) {
+        await answerTelegramCallbackQuery(cqId, "Button not found!", true);
+        return;
+      }
+      btn.enabled = !btn.enabled;
+      await persistButton(btn);
+      await answerTelegramCallbackQuery(cqId, `${btn.label} is now ${btn.enabled ? "ENABLED (ON)" : "DISABLED (OFF)"}`, true);
+
+      // Re-render buttons list
+      const allButtons = Array.from(buttonsStore.values()).sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
+      const keyboardRows: Array<Array<{ text: string; callback_data: string }>> = [];
+      allButtons.forEach(b => {
+        const statusIcon = b.enabled ? "🟢" : "🔴";
+        keyboardRows.push([
+          { text: `${statusIcon} ${b.label}`, callback_data: `admin_btn_view_${b.id}` },
+          { text: b.enabled ? "Turn OFF" : "Turn ON", callback_data: `admin_btn_toggle_${b.id}` }
+        ]);
+      });
+      keyboardRows.push([
+        { text: "➕ Add New Custom Button", callback_data: "admin_btn_add_prompt" },
+        { text: "🔙 Back to Admin Panel", callback_data: "admin_back_to_panel" }
+      ]);
+
+      const buttonsMsg = `🎛️ *BOT BUTTONS & APIS MASTER MANAGER*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ *Updated:* \`${btn.label}\` is now *${btn.enabled ? "🟢 ON (Active)" : "🔴 OFF (Disabled)"}*!
+Telegram keyboard auto-sync ho gaya hai.
+
+👇 *Select another button or action:*`;
+
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, buttonsMsg, { inline_keyboard: keyboardRows });
+      }
+      return;
+    }
+
+    if (data.startsWith("admin_btn_view_")) {
+      const targetBtnId = data.replace("admin_btn_view_", "");
+      const btn = buttonsStore.get(targetBtnId);
+      if (!btn) {
+        await answerTelegramCallbackQuery(cqId, "Button not found!", true);
+        return;
+      }
+      await answerTelegramCallbackQuery(cqId);
+
+      const infoCard = `⚙️ *BUTTON CONFIGURATION: ${btn.label}*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+• 🆔 *Button ID:* \`${btn.id}\`
+• ⚡ *Status:* ${btn.enabled ? "🟢 *ACTIVE (ON)*" : "🔴 *DISABLED (OFF)*"}
+• 📁 *Category:* \`${btn.category}\`
+• 🔗 *API Endpoint:*
+\`${btn.apiUrl}\`
+• 💡 *Placeholder:* \`${btn.placeholder}\`
+• 📌 *Example:* \`${btn.example || 'None'}\`
+• 🏷️ *Type:* ${btn.isCustom ? "Custom Button" : "Built-in System Button"}
+━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 *API Change Command:*
+\`/setapi ${btn.id} <new_api_url>\``;
+
+      const actionRows: Array<Array<{ text: string; callback_data: string }>> = [
+        [
+          { text: btn.enabled ? "🔴 Turn OFF" : "🟢 Turn ON", callback_data: `admin_btn_toggle_${btn.id}` },
+          { text: "✏️ Change API URL", callback_data: `admin_btn_editapi_${btn.id}` }
+        ],
+        [
+          { text: "🔙 Back to Buttons List", callback_data: "admin_buttons_list" }
+        ]
+      ];
+
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, infoCard, { inline_keyboard: actionRows });
+      } else {
+        await sendTelegramMessage(chatId, infoCard, { inline_keyboard: actionRows });
+      }
+      return;
+    }
+
+    if (data.startsWith("admin_btn_editapi_")) {
+      const targetBtnId = data.replace("admin_btn_editapi_", "");
+      const btn = buttonsStore.get(targetBtnId);
+      if (!btn) {
+        await answerTelegramCallbackQuery(cqId, "Button not found!", true);
+        return;
+      }
+      user.pendingAction = `admin_edit_api_${targetBtnId}`;
+      await answerTelegramCallbackQuery(cqId, "Send new API URL");
+      await sendTelegramMessage(chatId, `🔗 *CHANGE API URL FOR:* \`${btn.label}\`
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Current API:
+\`${btn.apiUrl}\`
+
+👉 Please type and send the **NEW API URL** now:
+*(Target query parameter should be at the end, e.g. \`https://myapi.com/lookup?q=\`)*
+
+*(Or send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
+
+    if (data === "admin_btn_add_prompt") {
+      user.pendingAction = "admin_add_custom_btn";
+      await answerTelegramCallbackQuery(cqId, "Add New Button");
+      await sendTelegramMessage(chatId, `➕ *ADD NEW BUTTON & CUSTOM API*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Please send button details in this format:
+\`Label | API_URL | Placeholder | Example\`
+
+*Example:*
+\`⚡ Electricity Bill | https://my-bill-api.com/check?ca= | Enter 10-digit CA Number | 1002345678\`
+
+*(Or send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
   }
 
   await answerTelegramCallbackQuery(cqId);
+}
+
+function formatGenericCustomCard(label: string, data: any, query: string): string {
+  if (!data) {
+    return `❌ *NO RECORDS LOCATED*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔍 *Service:* ${label}\n🎯 *Input Query:* \`${query}\`\n\nNo records found or remote endpoint returned empty response.\n━━━━━━━━━━━━━━━━━━━━━━━━━`;
+  }
+
+  let formatted = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n┃   ${label.toUpperCase()}\n╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n`;
+  formatted += `🎯 *Query Target:* \`${query}\`\n`;
+  formatted += `⏱️ *Generated:* \`${new Date().toLocaleString('en-IN')}\`\n`;
+  formatted += `━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+  if (typeof data === 'object') {
+    const entries = Object.entries(data).slice(0, 15);
+    for (const [key, value] of entries) {
+      if (typeof value === 'object' && value !== null) {
+        formatted += `• *${key}:* \`${JSON.stringify(value).slice(0, 80)}\`\n`;
+      } else {
+        formatted += `• *${key}:* \`${String(value || 'N/A')}\`\n`;
+      }
+    }
+  } else {
+    formatted += `\`${String(data).slice(0, 500)}\`\n`;
+  }
+
+  formatted += `━━━━━━━━━━━━━━━━━━━━━━━━━\n🔒 *Verified via ${BOT_NAME} v${BOT_VERSION}*`;
+  return formatted;
 }
 
 async function sendSearchResult(chatId: number | string, user: UserRecord, card: string, type: string, query?: string) {
@@ -1484,7 +1975,7 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
     return;
   }
 
-  // ── ADMIN BROADCAST PENDING ACTION ──
+  // ── ADMIN BROADCAST & MANAGEMENT PENDING ACTIONS ──
   if (user.pendingAction === 'admin_broadcast' && isAdmin) {
     user.pendingAction = undefined;
     if (text === "❌ Cancel" || text === "/cancel") {
@@ -1494,6 +1985,129 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
     await sendTelegramMessage(chatId, `⏳ *Broadcasting announcement to all registered users...*`);
     const result = await broadcastTelegramMessage(`📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${text}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— ${msg.from?.first_name || 'Admin'}`);
     await sendTelegramMessage(chatId, `✅ Broadcast complete!\nDelivered to: ${result.sent} users\nFailed: ${result.failed}`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (user.pendingAction === 'admin_remove_premium' && isAdmin) {
+    user.pendingAction = undefined;
+    if (text === "❌ Cancel" || text === "/cancel") {
+      await sendTelegramMessage(chatId, "🔙 Operation cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+    const targetId = text.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    const targetUser = usersStore.get(targetId);
+    if (!targetUser) {
+      await sendTelegramMessage(chatId, `❌ User \`${targetId}\` not found in bot database.\nMake sure the user has started the bot at least once.`, getMainReplyKeyboard(user));
+      return;
+    }
+    targetUser.role = 'free';
+    await persistUser(targetUser);
+    await sendTelegramMessage(chatId, `✅ *PREMIUM REVOKED / REMOVED!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n👤 User ID: \`${targetId}\`\n🎖️ New Role: 🆓 FREE TIER\n⚡ Daily Limit: ${getUserDailyLimit(targetUser)} searches\n\nUser has been demoted to standard access.`, getMainReplyKeyboard(user));
+    try {
+      await sendTelegramMessage(targetId, `ℹ️ *MEMBERSHIP UPDATE*\nYour VIP Premium membership has ended or been revoked by the administrator.\nYou are now on the Free tier (${FREE_DAILY_LIMIT} searches/day). Send /refer to earn extra daily credits!`);
+    } catch {}
+    return;
+  }
+
+  if (user.pendingAction === 'admin_add_premium' && isAdmin) {
+    user.pendingAction = undefined;
+    if (text === "❌ Cancel" || text === "/cancel") {
+      await sendTelegramMessage(chatId, "🔙 Operation cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+    const targetId = text.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    const targetUser = getUser(targetId);
+    targetUser.role = 'premium';
+    await persistUser(targetUser);
+    await sendTelegramMessage(chatId, `✅ *VIP PREMIUM GRANTED!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n👤 User ID: \`${targetId}\`\n🎖️ New Role: 💎 VIP PREMIUM\n⚡ Status: Unlimited Lookups Unlocked`, getMainReplyKeyboard(user));
+    try {
+      await sendTelegramMessage(targetId, `🎉 *VIP PREMIUM ACTIVATED!*\nThe administrator has granted you VIP Premium Access!\nYou now have unlimited OSINT searches. Enjoy! 🚀`);
+    } catch {}
+    return;
+  }
+
+  // ── TELEGRAM ADMIN EDIT API PENDING ACTION ──
+  if (user.pendingAction?.startsWith('admin_edit_api_') && isAdmin) {
+    const targetBtnId = user.pendingAction.replace('admin_edit_api_', '');
+    user.pendingAction = undefined;
+
+    if (text === "❌ Cancel" || text === "/cancel") {
+      await sendTelegramMessage(chatId, "🔙 Operation cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+
+    const newUrl = text.trim();
+    if (!newUrl.startsWith("http://") && !newUrl.startsWith("https://")) {
+      await sendTelegramMessage(chatId, `⚠️ *Invalid URL format!* URL must begin with \`http://\` or \`https://\`.\nOperation aborted.`, getMainReplyKeyboard(user));
+      return;
+    }
+
+    const btn = buttonsStore.get(targetBtnId);
+    if (!btn) {
+      await sendTelegramMessage(chatId, `❌ Button \`${targetBtnId}\` not found.`, getMainReplyKeyboard(user));
+      return;
+    }
+
+    const oldUrl = btn.apiUrl;
+    btn.apiUrl = newUrl;
+    await persistButton(btn);
+
+    await sendTelegramMessage(chatId, `✅ *API ENDPOINT UPDATED SUCCESSFULLY!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+• 🎛️ *Button:* \`${btn.label}\` (\`${btn.id}\`)
+• 🔴 *Old API:* \`${oldUrl}\`
+• 🟢 *New API:* \`${newUrl}\`
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Telegram bot & website live traffic are now redirected to this new endpoint! 🚀`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  // ── TELEGRAM ADMIN ADD CUSTOM BUTTON PENDING ACTION ──
+  if (user.pendingAction === 'admin_add_custom_btn' && isAdmin) {
+    user.pendingAction = undefined;
+
+    if (text === "❌ Cancel" || text === "/cancel") {
+      await sendTelegramMessage(chatId, "🔙 Operation cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+
+    const parts = text.split('|').map((p: string) => p.trim());
+    if (parts.length < 2) {
+      await sendTelegramMessage(chatId, `⚠️ *Invalid format!*\nPlease provide at least \`Label | API_URL\`.\nExample:\n\`⚡ Electricity Bill | https://my-bill-api.com/check?ca= | Enter CA Number | 1002345678\``, getMainReplyKeyboard(user));
+      return;
+    }
+
+    const label = parts[0];
+    const apiUrl = parts[1];
+    const placeholder = parts[2] || `Enter ${label}`;
+    const example = parts[3] || '';
+    const newId = 'custom_' + Date.now().toString(36);
+
+    const newBtn: BotButton = {
+      id: newId,
+      label,
+      category: 'custom',
+      apiUrl,
+      placeholder,
+      example,
+      description: `Custom lookup module for ${label}`,
+      enabled: true,
+      isCustom: true,
+      sortOrder: buttonsStore.size + 1
+    };
+
+    buttonsStore.set(newId, newBtn);
+    await persistButton(newBtn);
+
+    await sendTelegramMessage(chatId, `🎉 *NEW BUTTON & API ADDED!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+• 🎛️ *Label:* ${label}
+• 🆔 *Button ID:* \`${newId}\`
+• 🔗 *API URL:* \`${apiUrl}\`
+• 💡 *Input Hint:* \`${placeholder}\`
+• 🟢 *Status:* ACTIVE (ON)
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Naya button Telegram keyboard aur website dono par automatically live ho chuka hai!`, getMainReplyKeyboard(user));
     return;
   }
 
@@ -1515,6 +2129,77 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
   if (isAdmin && (text === "/bot off" || text === "/bot_off")) {
     isBotActive = false;
     await sendTelegramMessage(chatId, `🔴 *BOT IS NOW OFFLINE (MAINTENANCE MODE)*\nServices are paused for all regular users. Only administrators can use the bot.`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text === "/users" || text === "/all_users")) {
+    const allUsers = Array.from(usersStore.values());
+    const total = allUsers.length;
+    const prem = allUsers.filter(u => u.role === 'premium').length;
+    const free = allUsers.filter(u => u.role === 'free').length;
+
+    let msgText = `👥 *REGISTERED USERS DIRECTORY*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 Total Users: \`${total}\` | 💎 VIP: \`${prem}\` | 🆓 Free: \`${free}\`\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    const sample = allUsers.slice(-25).reverse();
+    sample.forEach((u, idx) => {
+      const roleIcon = u.role === 'admin' ? '👑' : u.role === 'premium' ? '💎' : '👤';
+      msgText += `${idx + 1}. ${roleIcon} ID: \`${u.userId}\` [${u.role.toUpperCase()}]\n   Searches: ${u.totalSearches} (Today: ${u.dailySearches}) | Invites: ${u.referralCount || 0}\n`;
+    });
+    if (total > 25) {
+      msgText += `\n*(Showing latest 25 of ${total} users)*`;
+    }
+    await sendTelegramMessage(chatId, msgText, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text === "/premium_users" || text === "/vip_users")) {
+    const premUsers = Array.from(usersStore.values()).filter(u => u.role === 'premium');
+    if (premUsers.length === 0) {
+      await sendTelegramMessage(chatId, `💎 *VIP PREMIUM USERS*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nNo active VIP premium users right now.\n\n👉 Grant with: \`/add_premium <userId>\`\n👉 Or drop code: \`/dropcode 30\``, getMainReplyKeyboard(user));
+      return;
+    }
+    let msgText = `💎 *VIP PREMIUM SUBSCRIBERS (${premUsers.length})*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    premUsers.forEach((u, idx) => {
+      msgText += `${idx + 1}. 💎 ID: \`${u.userId}\`\n   Total Searches: ${u.totalSearches} | Invites: ${u.referralCount || 0}\n   Remove: \`/remove_premium ${u.userId}\`\n`;
+    });
+    await sendTelegramMessage(chatId, msgText, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/remove_premium") || text.startsWith("/remove_prem") || text.startsWith("/remprem"))) {
+    const parts = text.split(/\s+/);
+    const targetId = parts[1]?.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    if (!targetId) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/remove_premium <Telegram_User_ID>\`\n\nExample: \`/remove_premium 6516740398\``, getMainReplyKeyboard(user));
+      return;
+    }
+    const targetUser = usersStore.get(targetId);
+    if (!targetUser) {
+      await sendTelegramMessage(chatId, `❌ User \`${targetId}\` not found in bot memory or database.`, getMainReplyKeyboard(user));
+      return;
+    }
+    targetUser.role = 'free';
+    await persistUser(targetUser);
+    await sendTelegramMessage(chatId, `✅ *VIP PREMIUM REVOKED!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n👤 User ID: \`${targetId}\`\n🎖️ New Role: 🆓 FREE TIER\n⚡ Daily Limit: ${getUserDailyLimit(targetUser)} searches\n\nUser has been successfully demoted to Free access.`, getMainReplyKeyboard(user));
+    try {
+      await sendTelegramMessage(targetId, `ℹ️ *MEMBERSHIP UPDATE*\nYour VIP Premium membership has ended or been revoked by the administrator.\nYou are now on the Free tier (${FREE_DAILY_LIMIT} searches/day). Send /refer to earn extra daily credits!`);
+    } catch {}
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/add_premium") || text.startsWith("/set_premium") || text.startsWith("/addprem"))) {
+    const parts = text.split(/\s+/);
+    const targetId = parts[1]?.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    if (!targetId) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/add_premium <Telegram_User_ID>\`\n\nExample: \`/add_premium 6516740398\``, getMainReplyKeyboard(user));
+      return;
+    }
+    const targetUser = getUser(targetId);
+    targetUser.role = 'premium';
+    await persistUser(targetUser);
+    await sendTelegramMessage(chatId, `✅ *VIP PREMIUM GRANTED!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n👤 User ID: \`${targetId}\`\n🎖️ Role: 💎 VIP PREMIUM\n⚡ Status: Unlimited Lookups Unlocked`, getMainReplyKeyboard(user));
+    try {
+      await sendTelegramMessage(targetId, `🎉 *VIP PREMIUM ACTIVATED!*\nThe administrator has granted you VIP Premium Access!\nYou now have unlimited OSINT searches. Enjoy! 🚀`);
+    } catch {}
     return;
   }
 
@@ -1553,6 +2238,59 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
     await sendTelegramMessage(chatId, `⏳ *Broadcasting announcement to all users...*`);
     const result = await broadcastTelegramMessage(`📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${broadcastText}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— ${msg.from?.first_name || 'Admin'}`);
     await sendTelegramMessage(chatId, `✅ Announcement sent to ${result.sent} users (${result.failed} failed).`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  // ── TELEGRAM ADMIN SHORTCUT COMMANDS FOR BUTTONS & APIS ──
+  if (isAdmin && (text === "/buttons" || text === "/manage_buttons")) {
+    const allButtons = Array.from(buttonsStore.values()).sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
+    const keyboardRows: Array<Array<{ text: string; callback_data: string }>> = [];
+    allButtons.forEach(btn => {
+      const statusIcon = btn.enabled ? "🟢" : "🔴";
+      keyboardRows.push([
+        { text: `${statusIcon} ${btn.label}`, callback_data: `admin_btn_view_${btn.id}` },
+        { text: btn.enabled ? "Turn OFF" : "Turn ON", callback_data: `admin_btn_toggle_${btn.id}` }
+      ]);
+    });
+    keyboardRows.push([
+      { text: "➕ Add New Custom Button", callback_data: "admin_btn_add_prompt" },
+      { text: "🔙 Back to Admin Panel", callback_data: "admin_back_to_panel" }
+    ]);
+    const buttonsMsg = `🎛️ *BOT BUTTONS & APIS MASTER MANAGER*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSelect any button below to toggle ON/OFF or change its API URL:`;
+    await sendTelegramMessage(chatId, buttonsMsg, { inline_keyboard: keyboardRows });
+    return;
+  }
+
+  if (isAdmin && text.startsWith("/setapi ")) {
+    const parts = text.replace("/setapi ", "").trim().split(/\s+/);
+    if (parts.length < 2) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/setapi <button_id> <new_api_url>\`\n\n*Example:*\n\`/setapi num2 https://my-new-api.vercel.app/search?mobile=\`\n\n*(Send /buttons to see all button IDs)*`, getMainReplyKeyboard(user));
+      return;
+    }
+    const btnId = parts[0];
+    const newApi = parts[1];
+    const btn = buttonsStore.get(btnId);
+    if (!btn) {
+      await sendTelegramMessage(chatId, `❌ Button with ID \`${btnId}\` not found.\nSend \`/buttons\` to inspect valid IDs.`, getMainReplyKeyboard(user));
+      return;
+    }
+    const oldApi = btn.apiUrl;
+    btn.apiUrl = newApi;
+    await persistButton(btn);
+    await sendTelegramMessage(chatId, `✅ *API ENDPOINT UPDATED VIA COMMAND!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n• 🎛️ *Button:* \`${btn.label}\` (\`${btn.id}\`)\n• 🔴 *Old:* \`${oldApi}\`\n• 🟢 *New:* \`${newApi}\`\n\nLive Telegram bot traffic is now routing to this new API!`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/togglebutton ") || text.startsWith("/toggle "))) {
+    const btnId = text.replace(/\/toggle(button)?\s+/, "").trim();
+    const btn = buttonsStore.get(btnId);
+    if (!btn) {
+      await sendTelegramMessage(chatId, `❌ Button \`${btnId}\` not found.\nSend \`/buttons\` to view list.`, getMainReplyKeyboard(user));
+      return;
+    }
+    btn.enabled = !btn.enabled;
+    await persistButton(btn);
+    await sendTelegramMessage(chatId, `✅ *BUTTON STATUS TOGGLED!*\n\n\`${btn.label}\` is now *${btn.enabled ? "🟢 ENABLED (ON)" : "🔴 DISABLED (OFF)"}*.\nBot keyboard has been updated.`, getMainReplyKeyboard(user));
     return;
   }
 
@@ -1683,7 +2421,7 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
     text.includes("Admin Control") ||
     text.includes("Admin Panel");
 
-  if (isNavOrActionButton && user.pendingAction && text !== "❌ Cancel" && user.pendingAction !== 'admin_broadcast') {
+  if (isNavOrActionButton && user.pendingAction && text !== "❌ Cancel" && user.pendingAction !== 'admin_broadcast' && user.pendingAction !== 'admin_remove_premium' && user.pendingAction !== 'admin_add_premium') {
     user.pendingAction = undefined;
   }
 
@@ -1895,10 +2633,28 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
 ━━━━━━━━━━━━━━━━━━━━━━━━━`, getMainReplyKeyboard(user));
       return;
     }
+
+    // Generic handler for custom or dynamic buttons
+    const customBtn = buttonsStore.get(action);
+    if (customBtn) {
+      user.pendingAction = undefined;
+      const cleanQ = text.trim();
+      await sendTelegramChatAction(chatId, "typing");
+      await sendTelegramMessage(chatId, `🔍 *Querying ${customBtn.label}...*\nTarget: \`${cleanQ}\`...`);
+      let data = await fetchWithTimeout(`${customBtn.apiUrl}${encodeURIComponent(cleanQ)}`);
+      recordSearch(userId);
+      const card = formatGenericCustomCard(customBtn.label, data, cleanQ);
+      await sendSearchResult(chatId, user, card, action, cleanQ);
+      return;
+    }
   }
 
   // ── KEYBOARD BUTTON ACTIONS (Prompts with Inline Cancel, bottom buttons remain intact) ──
   if (text === "📱 Mobile Lookup" || text === "📱 Num2 Lookup" || text.includes("Num2") || text.includes("Mobile") || text.toLowerCase() === "phone") {
+    if (!isButtonEnabled('num2')) {
+      await sendTelegramMessage(chatId, `⚠️ *Service Disabled*\n📱 Mobile Lookup service is temporarily turned OFF by Admin.`, getMainReplyKeyboard(user));
+      return;
+    }
     user.pendingAction = 'num2';
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('num2'), getPromptInlineKeyboard('num2'));
@@ -1906,6 +2662,10 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
   }
 
   if (text === "🚗 Vehicle Lookup" || text.includes("Vehicle") || text.toLowerCase() === "vehicle") {
+    if (!isButtonEnabled('vehicle')) {
+      await sendTelegramMessage(chatId, `⚠️ *Service Disabled*\n🚗 Vehicle Lookup service is temporarily turned OFF by Admin.`, getMainReplyKeyboard(user));
+      return;
+    }
     user.pendingAction = 'vehicle';
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('vehicle'), getPromptInlineKeyboard('vehicle'));
@@ -1913,6 +2673,10 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
   }
 
   if (text === "🗳️ Voter Lookup" || text.includes("Voter") || text.toLowerCase() === "voter") {
+    if (!isButtonEnabled('voter')) {
+      await sendTelegramMessage(chatId, `⚠️ *Service Disabled*\n🗳️ Voter Lookup service is temporarily turned OFF by Admin.`, getMainReplyKeyboard(user));
+      return;
+    }
     user.pendingAction = 'voter';
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('voter'), getPromptInlineKeyboard('voter'));
@@ -1920,6 +2684,10 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
   }
 
   if (text === "🪪 Aadhaar Info" || text === "🪪 Aadhar2Info" || text.includes("Aadhar") || text.includes("Aadhaar")) {
+    if (!isButtonEnabled('aadhar2info')) {
+      await sendTelegramMessage(chatId, `⚠️ *Service Disabled*\n🪪 Aadhaar Info service is temporarily turned OFF by Admin.`, getMainReplyKeyboard(user));
+      return;
+    }
     user.pendingAction = 'aadhar2info';
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('aadhar2info'), getPromptInlineKeyboard('aadhar2info'));
@@ -1927,6 +2695,10 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
   }
 
   if (text === "👨‍👩‍👧 Family Tree" || text === "👪 Aadhar2Family" || text.includes("Family")) {
+    if (!isButtonEnabled('aadhar2family')) {
+      await sendTelegramMessage(chatId, `⚠️ *Service Disabled*\n👨‍👩‍👧 Family Tree service is temporarily turned OFF by Admin.`, getMainReplyKeyboard(user));
+      return;
+    }
     user.pendingAction = 'aadhar2family';
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('aadhar2family'), getPromptInlineKeyboard('aadhar2family'));
@@ -1934,6 +2706,10 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
   }
 
   if (text === "🔥 LPG Gas Lookup" || text === "🔥 LPG Lookup" || text.includes("LPG") || text.toLowerCase() === "lpg") {
+    if (!isButtonEnabled('lpg')) {
+      await sendTelegramMessage(chatId, `⚠️ *Service Disabled*\n🔥 LPG Gas Lookup service is temporarily turned OFF by Admin.`, getMainReplyKeyboard(user));
+      return;
+    }
     user.pendingAction = 'lpg';
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('lpg'), getPromptInlineKeyboard('lpg'));
@@ -1941,6 +2717,10 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
   }
 
   if (text === "💳 UPI Lookup" || text === "💳 UPI2Num" || text.includes("UPI") || text.toLowerCase() === "upi") {
+    if (!isButtonEnabled('upi2num')) {
+      await sendTelegramMessage(chatId, `⚠️ *Service Disabled*\n💳 UPI Lookup service is temporarily turned OFF by Admin.`, getMainReplyKeyboard(user));
+      return;
+    }
     user.pendingAction = 'upi2num';
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('upi2num'), getPromptInlineKeyboard('upi2num'));
@@ -1948,6 +2728,10 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
   }
 
   if (text === "🏢 GST by Name" || text === "🏢 GST2Name" || text.includes("GST by Name") || text.includes("GST2Name")) {
+    if (!isButtonEnabled('gst2name')) {
+      await sendTelegramMessage(chatId, `⚠️ *Service Disabled*\n🏢 GST by Name service is temporarily turned OFF by Admin.`, getMainReplyKeyboard(user));
+      return;
+    }
     user.pendingAction = 'gst2name';
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('gst2name'), getPromptInlineKeyboard('gst2name'));
@@ -1955,6 +2739,10 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
   }
 
   if (text === "🪪 GST by PAN" || text === "🪪 GST2PAN" || text.includes("GST by PAN") || text.includes("GST2PAN")) {
+    if (!isButtonEnabled('gst2pan')) {
+      await sendTelegramMessage(chatId, `⚠️ *Service Disabled*\n🪪 GST by PAN service is temporarily turned OFF by Admin.`, getMainReplyKeyboard(user));
+      return;
+    }
     user.pendingAction = 'gst2pan';
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('gst2pan'), getPromptInlineKeyboard('gst2pan'));
@@ -1962,6 +2750,10 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
   }
 
   if (text === "📄 GST Details" || text === "📄 GSTIN Profile" || text.includes("GST Details") || text.includes("GSTIN Profile") || text.toLowerCase() === "gst") {
+    if (!isButtonEnabled('gst')) {
+      await sendTelegramMessage(chatId, `⚠️ *Service Disabled*\n📄 GST Details service is temporarily turned OFF by Admin.`, getMainReplyKeyboard(user));
+      return;
+    }
     user.pendingAction = 'gst';
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('gst'), getPromptInlineKeyboard('gst'));
@@ -1973,6 +2765,20 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
     await sendTelegramChatAction(chatId, "typing");
     await sendTelegramMessage(chatId, getPromptCard('redeem'), getPromptInlineKeyboard('redeem'));
     return;
+  }
+
+  // Dynamic check for all registered buttons (standard or custom)
+  for (const btn of buttonsStore.values()) {
+    if (text === btn.label || text.toLowerCase() === btn.label.toLowerCase() || (btn.label.includes(text) && text.length > 3)) {
+      if (!btn.enabled) {
+        await sendTelegramMessage(chatId, `⚠️ *Service Currently Disabled*\n\`${btn.label}\` service is temporarily turned OFF by Admin.\nPlease try another service or check back later.`, getMainReplyKeyboard(user));
+        return;
+      }
+      user.pendingAction = btn.id;
+      await sendTelegramChatAction(chatId, "typing");
+      await sendTelegramMessage(chatId, getPromptCard(btn.id), getPromptInlineKeyboard(btn.id));
+      return;
+    }
   }
 
   // ── ONE-SHOT SLASH COMMANDS ──
@@ -2201,8 +3007,9 @@ function clean(str: string): string {
 
 // ── EXPRESS APP ──
 async function startServer() {
-  // Restore persistent users from Supabase if configured
+  // Restore persistent users & buttons from Supabase if configured
   await loadUsersFromSupabase();
+  await loadButtonsFromSupabase();
 
   const app = express();
   app.use(cors());
@@ -2386,6 +3193,89 @@ async function startServer() {
     });
   });
 
+  // ── DYNAMIC BUTTONS & APIS ADMIN ENDPOINTS ──
+  // GET /api/buttons - returns all buttons
+  app.get('/api/buttons', (req, res) => {
+    const buttons = Array.from(buttonsStore.values()).sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
+    res.json({ success: true, buttons });
+  });
+
+  // POST /api/admin/buttons/toggle - enable or disable a button
+  app.post('/api/admin/buttons/toggle', async (req, res) => {
+    const { id, enabled } = req.body;
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Button ID is required' });
+    }
+    const btn = buttonsStore.get(id);
+    if (!btn) {
+      return res.status(404).json({ success: false, error: `Button ${id} not found` });
+    }
+    btn.enabled = Boolean(enabled);
+    await persistButton(btn);
+    res.json({ success: true, button: btn, message: `Button ${btn.label} is now ${btn.enabled ? 'ENABLED' : 'DISABLED'}` });
+  });
+
+  // POST /api/admin/buttons/update - update API URL, label, etc.
+  app.post('/api/admin/buttons/update', async (req, res) => {
+    const { id, apiUrl, label, category, placeholder, example, description, enabled } = req.body;
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Button ID is required' });
+    }
+    let btn = buttonsStore.get(id);
+    if (!btn) {
+      return res.status(404).json({ success: false, error: `Button ${id} not found` });
+    }
+
+    if (apiUrl !== undefined) btn.apiUrl = String(apiUrl).trim();
+    if (label !== undefined) btn.label = String(label).trim();
+    if (category !== undefined) btn.category = category;
+    if (placeholder !== undefined) btn.placeholder = String(placeholder).trim();
+    if (example !== undefined) btn.example = String(example).trim();
+    if (description !== undefined) btn.description = String(description).trim();
+    if (enabled !== undefined) btn.enabled = Boolean(enabled);
+
+    await persistButton(btn);
+    res.json({ success: true, button: btn, message: `Button ${btn.label} configuration updated successfully.` });
+  });
+
+  // POST /api/admin/buttons/add - add a brand new button + custom API
+  app.post('/api/admin/buttons/add', async (req, res) => {
+    const { id, label, apiUrl, category = 'custom', placeholder = '', example = '', description = '' } = req.body;
+    if (!label || !apiUrl) {
+      return res.status(400).json({ success: false, error: 'Label and API URL are required' });
+    }
+
+    const generatedId = (id || label.toLowerCase().replace(/[^a-z0-9]/g, '_')).trim() || `btn_${Date.now()}`;
+    const newBtn: BotButton = {
+      id: generatedId,
+      label: label.trim(),
+      category: category || 'custom',
+      apiUrl: apiUrl.trim(),
+      placeholder: placeholder.trim() || `Enter ${label}`,
+      example: example.trim() || '',
+      description: description.trim() || `Custom OSINT lookup module for ${label}`,
+      enabled: true,
+      isCustom: true,
+      sortOrder: buttonsStore.size + 1,
+    };
+
+    buttonsStore.set(generatedId, newBtn);
+    await persistButton(newBtn);
+    res.json({ success: true, button: newBtn, message: `New button ${newBtn.label} added successfully!` });
+  });
+
+  // DELETE /api/admin/buttons/:id - delete a custom button
+  app.delete('/api/admin/buttons/:id', async (req, res) => {
+    const { id } = req.params;
+    const btn = buttonsStore.get(id);
+    if (!btn) {
+      return res.status(404).json({ success: false, error: 'Button not found' });
+    }
+    buttonsStore.delete(id);
+    await deleteButtonFromDb(id);
+    res.json({ success: true, message: `Button ${btn.label} deleted successfully.` });
+  });
+
   // OSINT Lookup Router
   app.post('/api/lookup/:type', async (req, res) => {
     const { type } = req.params;
@@ -2393,6 +3283,14 @@ async function startServer() {
 
     if (!query) {
       return res.status(400).json({ error: 'Search query parameter is required' });
+    }
+
+    const targetBtn = buttonsStore.get(type);
+    if (targetBtn && !targetBtn.enabled) {
+      return res.status(403).json({
+        error: `Service '${targetBtn.label}' is currently turned OFF by Admin.`,
+        serviceDisabled: true
+      });
     }
 
     const user = getUser('web_client');
@@ -2415,43 +3313,58 @@ async function startServer() {
           break;
         }
         case 'num2': {
-          data = await fetchWithTimeout(`${NUM2_API_URL}${cleanQuery}`);
+          const url = getButtonApiUrl('num2', "https://rehu-hitek.vercel.app/search?mobile=");
+          data = await fetchWithTimeout(`${url}${cleanQuery}`);
           break;
         }
         case 'aadhar2info': {
-          data = await fetchWithTimeout(`${AADHAR2_API_URL}${cleanQuery}`);
+          const url = getButtonApiUrl('aadhar2info', "https://rehu-hitek.vercel.app/search?field=aadharNumber&q=");
+          data = await fetchWithTimeout(`${url}${cleanQuery}`);
           break;
         }
         case 'aadhar2family': {
-          data = await fetchWithTimeout(`${AADHAR2FAM_API_URL}${cleanQuery}`);
+          const url = getButtonApiUrl('aadhar2family', "https://aadhar2fam-black.vercel.app/get-family-by-aadhaar?key=IRAM&tkn=IRAM&aadhaar=");
+          data = await fetchWithTimeout(`${url}${cleanQuery}`);
           break;
         }
         case 'voter': {
-          data = await fetchWithTimeout(`${VOTER_API_URL}${cleanQuery.toUpperCase()}`);
+          const url = getButtonApiUrl('voter', "https://voter-rehuu.vercel.app/search?epic=");
+          data = await fetchWithTimeout(`${url}${cleanQuery.toUpperCase()}`);
           break;
         }
         case 'lpg': {
-          data = await fetchWithTimeout(`${LPG_API_URL}${cleanQuery}`);
+          const url = getButtonApiUrl('lpg', "https://lpg-rehu-lovat.vercel.app/validate?key=IRAM&tkn=IRAM&phone=");
+          data = await fetchWithTimeout(`${url}${cleanQuery}`);
           break;
         }
         case 'upi2num': {
-          data = await fetchWithTimeout(`${UPI2NUM_API_URL}${encodeURIComponent(cleanQuery)}`);
+          const url = getButtonApiUrl('upi2num', "https://paytm-seven-zeta.vercel.app/fetch?key=IRAM&tkn=IRAM&upi=");
+          data = await fetchWithTimeout(`${url}${encodeURIComponent(cleanQuery)}`);
           break;
         }
         case 'gst2name': {
-          data = await fetchWithTimeout(`${GST2NAME_API_URL}${encodeURIComponent(cleanQuery)}`);
+          const url = getButtonApiUrl('gst2name', "https://pan-2jzn.onrender.com/search-gstin?name=");
+          data = await fetchWithTimeout(`${url}${encodeURIComponent(cleanQuery)}`);
           break;
         }
         case 'gst2pan': {
-          data = await fetchWithTimeout(`${GST2PAN_API_URL}${cleanQuery.toUpperCase()}`);
+          const url = getButtonApiUrl('gst2pan', "https://pan-2jzn.onrender.com/pan/");
+          data = await fetchWithTimeout(`${url}${cleanQuery.toUpperCase()}`);
           break;
         }
         case 'gst': {
-          data = await fetchWithTimeout(`${GST_API_URL}${cleanQuery.toUpperCase()}`);
+          const url = getButtonApiUrl('gst', "https://pan-2jzn.onrender.com/gstin/");
+          data = await fetchWithTimeout(`${url}${cleanQuery.toUpperCase()}`);
           break;
         }
-        default:
+        default: {
+          // Dynamic handler for any custom button added by Admin
+          if (targetBtn && targetBtn.apiUrl) {
+            data = await fetchWithTimeout(`${targetBtn.apiUrl}${encodeURIComponent(cleanQuery)}`);
+            break;
+          }
           return res.status(400).json({ error: `Unsupported lookup type: ${type}` });
+        }
       }
 
       recordSearch('web_client');
@@ -2532,7 +3445,8 @@ async function startServer() {
           });
         }
         user.pendingAction = undefined;
-        let data = await fetchWithTimeout(`${NUM2_API_URL}${cleanPhone}`);
+        const url = getButtonApiUrl('num2', "https://rehu-hitek.vercel.app/search?mobile=");
+        let data = await fetchWithTimeout(`${url}${cleanPhone}`);
         recordSearch('web_client');
         const card = formatNum2Card(data, cleanPhone);
         return res.json({
@@ -2567,7 +3481,8 @@ async function startServer() {
       if (action === 'voter') {
         const epic = text.trim().toUpperCase();
         user.pendingAction = undefined;
-        let data = await fetchWithTimeout(`${VOTER_API_URL}${epic}`);
+        const url = getButtonApiUrl('voter', "https://voter-rehuu.vercel.app/search?epic=");
+        let data = await fetchWithTimeout(`${url}${epic}`);
         recordSearch('web_client');
         const card = formatVoterCard(data, epic);
         return res.json({
@@ -2589,7 +3504,9 @@ async function startServer() {
           });
         }
         user.pendingAction = undefined;
-        let data = await fetchWithTimeout(isFam ? `${AADHAR2FAM_API_URL}${aadhaar}` : `${AADHAR2_API_URL}${aadhaar}`);
+        const defaultUrl = isFam ? "https://aadhar2fam-black.vercel.app/get-family-by-aadhaar?key=IRAM&tkn=IRAM&aadhaar=" : "https://rehu-hitek.vercel.app/search?field=aadharNumber&q=";
+        const url = getButtonApiUrl(action, defaultUrl);
+        let data = await fetchWithTimeout(`${url}${aadhaar}`);
         recordSearch('web_client');
         const card = formatAadharCard(data, aadhaar, isFam);
         return res.json({
@@ -2603,7 +3520,8 @@ async function startServer() {
       if (action === 'lpg') {
         const q = text.trim();
         user.pendingAction = undefined;
-        let data = await fetchWithTimeout(`${LPG_API_URL}${q}`);
+        const url = getButtonApiUrl('lpg', "https://lpg-rehu-lovat.vercel.app/validate?key=IRAM&tkn=IRAM&phone=");
+        let data = await fetchWithTimeout(`${url}${q}`);
         recordSearch('web_client');
         const card = formatLPGCard(data, q);
         return res.json({
@@ -2617,7 +3535,8 @@ async function startServer() {
       if (action === 'upi2num') {
         const upi = text.trim();
         user.pendingAction = undefined;
-        let data = await fetchWithTimeout(`${UPI2NUM_API_URL}${encodeURIComponent(upi)}`);
+        const url = getButtonApiUrl('upi2num', "https://paytm-seven-zeta.vercel.app/fetch?key=IRAM&tkn=IRAM&upi=");
+        let data = await fetchWithTimeout(`${url}${encodeURIComponent(upi)}`);
         recordSearch('web_client');
         const card = formatUPICard(data, upi);
         return res.json({
@@ -2631,7 +3550,8 @@ async function startServer() {
       if (action === 'gst2name') {
         const name = text.trim();
         user.pendingAction = undefined;
-        let data = await fetchWithTimeout(`${GST2NAME_API_URL}${encodeURIComponent(name)}`);
+        const url = getButtonApiUrl('gst2name', "https://pan-2jzn.onrender.com/search-gstin?name=");
+        let data = await fetchWithTimeout(`${url}${encodeURIComponent(name)}`);
         recordSearch('web_client');
         const card = formatGSTCard(data, name, 'name');
         return res.json({
@@ -2645,7 +3565,8 @@ async function startServer() {
       if (action === 'gst2pan') {
         const pan = text.trim().toUpperCase();
         user.pendingAction = undefined;
-        let data = await fetchWithTimeout(`${GST2PAN_API_URL}${pan}`);
+        const url = getButtonApiUrl('gst2pan', "https://pan-2jzn.onrender.com/pan/");
+        let data = await fetchWithTimeout(`${url}${pan}`);
         recordSearch('web_client');
         const card = formatGSTCard(data, pan, 'pan');
         return res.json({
@@ -2659,13 +3580,30 @@ async function startServer() {
       if (action === 'gst') {
         const gstin = text.trim().toUpperCase();
         user.pendingAction = undefined;
-        let data = await fetchWithTimeout(`${GST_API_URL}${gstin}`);
+        const url = getButtonApiUrl('gst', "https://pan-2jzn.onrender.com/gstin/");
+        let data = await fetchWithTimeout(`${url}${gstin}`);
         recordSearch('web_client');
         const card = formatGSTCard(data, gstin, 'gst');
         return res.json({
           reply: card,
           lookupType: 'gst',
           lookupQuery: gstin,
+          awaitingInput: false,
+        });
+      }
+
+      // Check if action matches a custom dynamic button
+      const customBtn = buttonsStore.get(action);
+      if (customBtn) {
+        user.pendingAction = undefined;
+        const cleanQ = text.trim();
+        let data = await fetchWithTimeout(`${customBtn.apiUrl}${encodeURIComponent(cleanQ)}`);
+        recordSearch('web_client');
+        const card = formatGenericCustomCard(customBtn.label, data, cleanQ);
+        return res.json({
+          reply: card,
+          lookupType: action,
+          lookupQuery: cleanQ,
           awaitingInput: false,
         });
       }
@@ -2925,6 +3863,81 @@ Tap *❌ Cancel* to return to main menu.`,
       return res.json({
         reply: `🔴 *BOT IS NOW OFFLINE (MAINTENANCE MODE)*\nServices are paused for all regular users. Only administrators can use the bot.`,
         awaitingInput: false,
+      });
+    }
+
+    if (text === "/users" || text === "/all_users") {
+      const allUsers = Array.from(usersStore.values());
+      const total = allUsers.length;
+      const prem = allUsers.filter(u => u.role === 'premium').length;
+      const free = allUsers.filter(u => u.role === 'free').length;
+
+      let msgText = `👥 *REGISTERED USERS DIRECTORY*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 Total Users: \`${total}\` | 💎 VIP: \`${prem}\` | 🆓 Free: \`${free}\`\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      const sample = allUsers.slice(-25).reverse();
+      sample.forEach((u, idx) => {
+        const roleIcon = u.role === 'admin' ? '👑' : u.role === 'premium' ? '💎' : '👤';
+        msgText += `${idx + 1}. ${roleIcon} ID: \`${u.userId}\` [${u.role.toUpperCase()}]\n   Searches: ${u.totalSearches} (Today: ${u.dailySearches}) | Invites: ${u.referralCount || 0}\n`;
+      });
+      if (total > 25) {
+        msgText += `\n*(Showing latest 25 of ${total} users)*`;
+      }
+      return res.json({ reply: msgText, awaitingInput: false });
+    }
+
+    if (text === "/premium_users" || text === "/vip_users") {
+      const premUsers = Array.from(usersStore.values()).filter(u => u.role === 'premium');
+      if (premUsers.length === 0) {
+        return res.json({
+          reply: `💎 *VIP PREMIUM USERS*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nNo active VIP premium users right now.\n\n👉 Grant with: \`/add_premium <userId>\`\n👉 Or drop code: \`/dropcode 30\``,
+          awaitingInput: false
+        });
+      }
+      let msgText = `💎 *VIP PREMIUM SUBSCRIBERS (${premUsers.length})*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      premUsers.forEach((u, idx) => {
+        msgText += `${idx + 1}. 💎 ID: \`${u.userId}\`\n   Total Searches: ${u.totalSearches} | Invites: ${u.referralCount || 0}\n   Remove: \`/remove_premium ${u.userId}\`\n`;
+      });
+      return res.json({ reply: msgText, awaitingInput: false });
+    }
+
+    if (text.startsWith("/remove_premium") || text.startsWith("/remove_prem") || text.startsWith("/remprem")) {
+      const parts = text.split(/\s+/);
+      const targetId = parts[1]?.trim().replace(/[^0-9a-zA-Z_]/g, '');
+      if (!targetId) {
+        return res.json({
+          reply: `⚠️ *Usage:* \`/remove_premium <Telegram_User_ID>\`\n\nExample: \`/remove_premium 6516740398\``,
+          awaitingInput: false
+        });
+      }
+      const targetUser = usersStore.get(targetId);
+      if (!targetUser) {
+        return res.json({
+          reply: `❌ User \`${targetId}\` not found in bot database.`,
+          awaitingInput: false
+        });
+      }
+      targetUser.role = 'free';
+      persistUser(targetUser).catch(() => {});
+      return res.json({
+        reply: `✅ *VIP PREMIUM REVOKED!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n👤 User ID: \`${targetId}\`\n🎖️ New Role: 🆓 FREE TIER\n⚡ Daily Limit: ${getUserDailyLimit(targetUser)} searches\n\nUser demoted to standard access.`,
+        awaitingInput: false
+      });
+    }
+
+    if (text.startsWith("/add_premium") || text.startsWith("/set_premium") || text.startsWith("/addprem")) {
+      const parts = text.split(/\s+/);
+      const targetId = parts[1]?.trim().replace(/[^0-9a-zA-Z_]/g, '');
+      if (!targetId) {
+        return res.json({
+          reply: `⚠️ *Usage:* \`/add_premium <Telegram_User_ID>\`\n\nExample: \`/add_premium 6516740398\``,
+          awaitingInput: false
+        });
+      }
+      const targetUser = getUser(targetId);
+      targetUser.role = 'premium';
+      persistUser(targetUser).catch(() => {});
+      return res.json({
+        reply: `✅ *VIP PREMIUM GRANTED!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n👤 User ID: \`${targetId}\`\n🎖️ Role: 💎 VIP PREMIUM\n⚡ Status: Unlimited Lookups Unlocked`,
+        awaitingInput: false
       });
     }
 

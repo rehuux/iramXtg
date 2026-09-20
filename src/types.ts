@@ -1,28 +1,21 @@
-export type LookupType =
-  | 'vehicle'
-  | 'num2'
-  | 'aadhar2info'
-  | 'aadhar2family'
-  | 'voter'
-  | 'lpg'
-  | 'upi2num'
-  | 'gst2name'
-  | 'gst2pan'
-  | 'gst';
+export type LookupType = string;
 
 export interface LookupOption {
-  id: LookupType;
+  id: string;
   title: string;
   icon: string;
   placeholder: string;
   example: string;
   description: string;
-  category: 'vehicles' | 'identity' | 'telecom' | 'business';
+  category: 'vehicles' | 'identity' | 'telecom' | 'business' | 'custom';
+  enabled?: boolean;
+  apiUrl?: string;
+  isCustom?: boolean;
 }
 
 export interface SearchResult {
   success: boolean;
-  type: LookupType;
+  type: string;
   query: string;
   timestamp: string;
   data: any;
@@ -54,6 +47,19 @@ export interface BotConfig {
   channelLink: string;
   supportGroup: string;
   telegramActive: boolean;
+}
+
+export interface BotButton {
+  id: string;
+  label: string;
+  category: string;
+  apiUrl: string;
+  placeholder?: string;
+  example?: string;
+  description?: string;
+  enabled: boolean;
+  isCustom?: boolean;
+  sortOrder?: number;
 }
 
 export interface RedeemCode {
