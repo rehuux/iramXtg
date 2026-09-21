@@ -137,15 +137,15 @@ export const SystemSettingsTab: React.FC<SystemSettingsTabProps> = ({ config, on
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
           <div className="flex items-center gap-2 text-white font-semibold text-sm border-b border-slate-800 pb-3">
             <Clock className="w-4 h-4 text-amber-400" />
-            <span>Group Auto-Delete Destruct Delay</span>
+            <span>Group Auto-Delete Destruct Delay (All Messages)</span>
           </div>
 
           <p className="text-xs text-slate-300 leading-relaxed">
-            Jab koi user Telegram group me search karega, toh uska search query aur bot ka diya result card ya <code className="text-indigo-300 font-mono">.txt</code> document itne seconds ke baad automatic delete ho jayenge:
+            Telegram group mein aane wala <strong className="text-amber-300">har ek message</strong> (user chat, images, stickers, search queries, aur bot ka diya hua result report) theek itne seconds ke baad group se automatically delete ho jayega:
           </p>
 
           <div className="flex flex-wrap items-center gap-3">
-            {[15, 30, 40, 60, 120].map((sec) => (
+            {[10, 20, 30, 40, 60, 120].map((sec) => (
               <button
                 key={sec}
                 type="button"

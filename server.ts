@@ -699,7 +699,12 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
     });
     const data = await res.json();
     if (data.ok && data.result?.message_id) {
-      return data.result.message_id;
+      const msgId = data.result.message_id;
+      const isGroup = Number(chatId) < 0 || String(chatId).startsWith('-');
+      if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+        scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
+      }
+      return msgId;
     }
     // Fallback if markdown parsing fails
     if (!data.ok && data.description?.includes('entity')) {
@@ -714,7 +719,12 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
       });
       const plainData = await plainRes.json();
       if (plainData.ok && plainData.result?.message_id) {
-        return plainData.result.message_id;
+        const msgId = plainData.result.message_id;
+        const isGroup = Number(chatId) < 0 || String(chatId).startsWith('-');
+        if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+          scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
+        }
+        return msgId;
       }
     }
     // Fallback if message too long according to Telegram
@@ -757,7 +767,12 @@ async function sendTelegramDocument(
     });
     const data = await res.json();
     if (data.ok && data.result?.message_id) {
-      return data.result.message_id;
+      const msgId = data.result.message_id;
+      const isGroup = Number(chatId) < 0 || String(chatId).startsWith('-');
+      if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+        scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
+      }
+      return msgId;
     }
     // Fallback if markdown in caption fails
     if (!data.ok && caption && data.description?.includes('entity')) {
@@ -774,7 +789,12 @@ async function sendTelegramDocument(
       });
       const plainData = await plainRes.json();
       if (plainData.ok && plainData.result?.message_id) {
-        return plainData.result.message_id;
+        const msgId = plainData.result.message_id;
+        const isGroup = Number(chatId) < 0 || String(chatId).startsWith('-');
+        if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+          scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
+        }
+        return msgId;
       }
     }
     console.error("sendTelegramDocument error response:", data);
@@ -802,12 +822,26 @@ async function deleteTelegramMessage(chatId: number | string, messageId: number 
   }
 }
 
+const pendingDeletions = new Set<string>();
+
 function scheduleAutoDelete(chatId: number | string, messageIds: (number | null | undefined)[], delayMs = AUTO_DELETE_DELAY_MS) {
-  setTimeout(async () => {
-    for (const mid of messageIds) {
-      if (mid) {
-        await deleteTelegramMessage(chatId, mid).catch(() => {});
+  if (delayMs <= 0) return;
+  const idsToDelete: number[] = [];
+  for (const mid of messageIds) {
+    if (mid) {
+      const key = `${chatId}:${mid}`;
+      if (!pendingDeletions.has(key)) {
+        pendingDeletions.add(key);
+        idsToDelete.push(mid);
       }
+    }
+  }
+  if (idsToDelete.length === 0) return;
+
+  setTimeout(async () => {
+    for (const mid of idsToDelete) {
+      pendingDeletions.delete(`${chatId}:${mid}`);
+      await deleteTelegramMessage(chatId, mid).catch(() => {});
     }
   }, delayMs);
 }
@@ -1279,14 +1313,17 @@ function getAdminAutoDeleteKeyboard(currentMs: number) {
   return {
     inline_keyboard: [
       [
-        { text: curSec === 15 ? "🔘 15s (Active)" : "15s", callback_data: "admin_set_delay_15" },
-        { text: curSec === 30 ? "🔘 30s (Active)" : "30s", callback_data: "admin_set_delay_30" },
-        { text: curSec === 40 ? "🔘 40s (Active)" : "40s", callback_data: "admin_set_delay_40" }
+        { text: curSec === 10 ? "🔘 10s (Active)" : "10s", callback_data: "admin_set_delay_10" },
+        { text: curSec === 20 ? "🔘 20s (Active)" : "20s", callback_data: "admin_set_delay_20" },
+        { text: curSec === 30 ? "🔘 30s (Active)" : "30s", callback_data: "admin_set_delay_30" }
       ],
       [
+        { text: curSec === 40 ? "🔘 40s (Active)" : "40s", callback_data: "admin_set_delay_40" },
         { text: curSec === 60 ? "🔘 60s (Active)" : "60s", callback_data: "admin_set_delay_60" },
-        { text: curSec === 120 ? "🔘 120s (Active)" : "120s", callback_data: "admin_set_delay_120" },
-        { text: currentMs === 0 ? "🔘 Off (Active)" : "🚫 Disabled", callback_data: "admin_set_delay_0" }
+        { text: curSec === 120 ? "🔘 120s (Active)" : "120s", callback_data: "admin_set_delay_120" }
+      ],
+      [
+        { text: currentMs === 0 ? "🔘 Off (Active)" : "🚫 Disable Auto-Delete", callback_data: "admin_set_delay_0" }
       ],
       [
         { text: "🔙 Back to Admin Master", callback_data: "admin_back_to_panel" }
@@ -1457,7 +1494,7 @@ function getAdminControlCard(active: boolean): string {
 • \`/reset_user <id>\` ➜ Reset today's searches to 0
 • \`/add_searches <id> <N>\` ➜ Add +N bonus searches
 • \`/export_users\` ➜ Download complete .txt report
-• \`/set_delay <sec>\` ➜ Set group auto-delete delay
+• \`/autodelete <sec>\` ➜ Auto-delete all group messages (or /set_delay)
 • \`/set_limit <num>\` ➜ Set free daily limit
 • \`/dropcode <days>\` ➜ Broadcast single-use voucher
 • \`/broadcast <msg>\` ➜ Send global announcement
@@ -1809,8 +1846,24 @@ async function runTelegramPoller() {
       if (data.ok && Array.isArray(data.result)) {
         for (const update of data.result) {
           lastUpdateId = update.update_id;
-          if (update.message && update.message.text) {
-            await handleTelegramUpdate(update.message);
+          const msg = update.message || update.edited_message;
+          if (msg) {
+            const chatId = msg.chat?.id;
+            const chatType = msg.chat?.type || (Number(chatId) < 0 ? 'supergroup' : 'private');
+            const isGroup = chatType === 'group' || chatType === 'supergroup' || Number(chatId) < 0;
+
+            // Global Auto-Delete: Delete ANY message (text, media, sticker, voice, document, service event)
+            // received in a group chat after the configured timer:
+            if (isGroup && msg.message_id && AUTO_DELETE_DELAY_MS > 0) {
+              scheduleAutoDelete(chatId, [msg.message_id], AUTO_DELETE_DELAY_MS);
+            }
+
+            if (msg.text || msg.caption) {
+              if (!msg.text && msg.caption) {
+                msg.text = msg.caption;
+              }
+              await handleTelegramUpdate(msg);
+            }
           } else if (update.callback_query) {
             await handleTelegramCallbackQuery(update.callback_query);
           }
@@ -2078,13 +2131,13 @@ Whitelist trusted users or VIPs here to allow direct private messaging lookups!`
     if (data === "admin_menu_autodelete") {
       await answerTelegramCallbackQuery(cqId, "Opening Auto-Delete Settings");
       const curSec = AUTO_DELETE_DELAY_MS > 0 ? `${Math.round(AUTO_DELETE_DELAY_MS / 1000)}s` : 'Disabled';
-      const textMsg = `⏱️ *GROUP LOOKUP AUTO-DELETE TIMER*
+      const textMsg = `⏱️ *GROUP AUTO-DELETE TIMER (ALL MESSAGES)*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 Current Timer: *${curSec}*
 
-When users execute lookups in the group, the bot automatically wipes both the query message and the confidential lookup results after this delay to prevent chat clutter and protect privacy.
+Ab group me koi bhi message aayega (user chat, photos, stickers, queries aur bot response), theek itne seconds ke baad automatically group se delete ho jayega.
 
-Select a new delay:`;
+*Select a timer below or send /autodelete <sec>:*`;
       if (cq.message?.message_id) {
         await editTelegramMessageText(chatId, cq.message.message_id, textMsg, getAdminAutoDeleteKeyboard(AUTO_DELETE_DELAY_MS));
       } else {
@@ -2097,7 +2150,9 @@ Select a new delay:`;
       const sec = parseInt(data.replace("admin_set_delay_", ""), 10);
       AUTO_DELETE_DELAY_MS = sec * 1000;
       await answerTelegramCallbackQuery(cqId, `Auto-delete set to ${sec === 0 ? 'Disabled' : sec + 's'}!`, true);
-      const textMsg = `✅ *Auto-delete timer updated to ${sec === 0 ? 'OFF (Disabled)' : sec + ' seconds'}!*`;
+      const textMsg = `✅ *Auto-delete timer updated to ${sec === 0 ? 'OFF (Disabled)' : sec + ' seconds'}!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+${sec === 0 ? '🛑 Auto-deletion disabled.' : `🧹 Group mein aane wala har message theek *${sec}s* baad auto-delete hoga!`}`;
       if (cq.message?.message_id) {
         await editTelegramMessageText(chatId, cq.message.message_id, textMsg, getAdminAutoDeleteKeyboard(AUTO_DELETE_DELAY_MS));
       }
@@ -3146,15 +3201,33 @@ User must now run lookups strictly in the official group.`, getMainReplyKeyboard
     return;
   }
 
-  if (isAdmin && (text.startsWith("/set_delay") || text.startsWith("/setdelay"))) {
+  if (isAdmin && (text.startsWith("/set_delay") || text.startsWith("/setdelay") || text.startsWith("/autodelete") || text.startsWith("/autodel"))) {
     const parts = text.split(/\s+/);
     const sec = parseInt(parts[1], 10);
     if (isNaN(sec)) {
-      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/set_delay <seconds>\`\nExample: \`/set_delay 40\` (or \`0\` to disable auto-delete)`, getMainReplyKeyboard(user));
+      const curSec = AUTO_DELETE_DELAY_MS > 0 ? `${Math.round(AUTO_DELETE_DELAY_MS / 1000)}s` : 'Disabled';
+      const msg = `⏱️ *GROUP AUTO-DELETE TIMER CONFIGURATION*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Current Auto-Delete Delay: *${curSec}*
+
+Ab group me koi bhi message aayega, utne seconds baad automatic delete ho jayega.
+
+Usage:
+• \`/autodelete <seconds>\` — Set custom timer (e.g. \`/autodelete 30\`)
+• \`/autodelete 0\` — Disable auto-delete
+• Ya \`/admin\` bhejkar interactive button se timer choose karein!
+
+⚠️ *Note:* Bot ko group me *Delete Messages* admin permission honi chahiye!`;
+      await sendTelegramMessage(chatId, msg, getMainReplyKeyboard(user));
       return;
     }
     AUTO_DELETE_DELAY_MS = sec * 1000;
-    await sendTelegramMessage(chatId, `⏱️ *Auto-delete delay updated to ${sec === 0 ? 'Disabled' : sec + ' seconds'}!*`, getMainReplyKeyboard(user));
+    const updateMsg = sec === 0
+      ? `🛑 *Group Auto-Delete has been DISABLED.* Group messages will no longer be auto-deleted.`
+      : `⏱️ *Group Auto-Delete timer set to ${sec} seconds!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Ab group mein koi bhi message aayega (user chat, images, stickers, queries aur bot ke results), theek *${sec} seconds* ke baad automatically delete ho jayega! 🧹`;
+    await sendTelegramMessage(chatId, updateMsg, getMainReplyKeyboard(user));
     return;
   }
 
@@ -4280,6 +4353,13 @@ You have used up your free daily search allowance.
       await sendSearchResult(chatId, user, card, detected.type, detected.cleanQuery, userMsgId);
       return;
     }
+  }
+
+  if (isGroup) {
+    if (text.startsWith("/")) {
+      await sendTelegramMessage(chatId, `⚠️ *Unknown command.* Send /help to view available OSINT lookup modules.`);
+    }
+    return;
   }
 
   await sendTelegramMessage(chatId, `👋 Tap any service button below or send /help to view command list:`, getMainReplyKeyboard(user));
