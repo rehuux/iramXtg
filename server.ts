@@ -191,13 +191,13 @@ const DEVELOPER_LINK   = "https://t.me/gotweeds";
 const CHANNEL_ID       = process.env.CHANNEL_ID || "-1002085221963";
 const CHANNEL_LINK     = process.env.CHANNEL_URL || "https://t.me/rehuszr";
 const CHANNEL_USERNAME = "@RehuSzr";
-const OFFICIAL_GROUP_ID = process.env.OFFICIAL_GROUP_ID || "-1002164265666";
-const OFFICIAL_GROUP_URL = process.env.OFFICIAL_GROUP_URL || "https://t.me/lookupXchat";
-const OFFICIAL_GROUP_USERNAME = "@lookupXchat";
-const SUPPORT_GROUP    = "@lookupXchat";
-const AUTO_DELETE_DELAY_MS = 40000; // 40 seconds auto-destruct in groups
-const FREE_DAILY_LIMIT = 20;
-const REFERRAL_BONUS_PER_USER = 10; // +10 extra credit daily per referral!
+let OFFICIAL_GROUP_ID = process.env.OFFICIAL_GROUP_ID || "-1002164265666";
+let OFFICIAL_GROUP_URL = process.env.OFFICIAL_GROUP_URL || "https://t.me/lookupXchat";
+let OFFICIAL_GROUP_USERNAME = "@lookupXchat";
+let SUPPORT_GROUP    = "@lookupXchat";
+let AUTO_DELETE_DELAY_MS = 40000; // default 40 seconds auto-destruct in groups
+let FREE_DAILY_LIMIT = 20;
+let REFERRAL_BONUS_PER_USER = 10; // +10 extra credit daily per referral!
 
 // ── IN-MEMORY STORE ──
 interface UserRecord {
@@ -3921,6 +3921,92 @@ async function startServer() {
       },
       message: `User ${userId} configured successfully!`
     });
+  });
+
+  // ── ADMIN SYSTEM SETTINGS & PARAMETERS ──
+  app.get('/api/admin/settings', (req, res) => {
+    res.json({
+      success: true,
+      settings: {
+        autoDeleteSeconds: Math.round(AUTO_DELETE_DELAY_MS / 1000),
+        freeDailyLimit: FREE_DAILY_LIMIT,
+        referralBonusPerUser: REFERRAL_BONUS_PER_USER,
+        officialGroupId: OFFICIAL_GROUP_ID,
+        officialGroupUrl: OFFICIAL_GROUP_URL,
+        officialGroupUsername: OFFICIAL_GROUP_USERNAME,
+        telegramActive: isTelegramPolling,
+      }
+    });
+  });
+
+  app.post('/api/admin/settings', (req, res) => {
+    const { autoDeleteSeconds, freeDailyLimit: newLimit, referralBonusPerUser: newBonus, officialGroupId: newGroupId, officialGroupUrl: newGroupUrl } = req.body;
+    if (autoDeleteSeconds !== undefined) {
+      const sec = Math.max(5, Math.min(600, Number(autoDeleteSeconds) || 40));
+      AUTO_DELETE_DELAY_MS = sec * 1000;
+    }
+    if (newLimit !== undefined) {
+      FREE_DAILY_LIMIT = Math.max(1, Math.min(1000, Number(newLimit) || 20));
+    }
+    if (newBonus !== undefined) {
+      REFERRAL_BONUS_PER_USER = Math.max(0, Math.min(500, Number(newBonus) || 10));
+    }
+    if (newGroupId !== undefined && String(newGroupId).trim()) {
+      OFFICIAL_GROUP_ID = String(newGroupId).trim();
+    }
+    if (newGroupUrl !== undefined && String(newGroupUrl).trim()) {
+      OFFICIAL_GROUP_URL = String(newGroupUrl).trim();
+      const match = String(newGroupUrl).match(/t\.me\/([a-zA-Z0-9_]+)/);
+      if (match) OFFICIAL_GROUP_USERNAME = `@${match[1]}`;
+    }
+    res.json({
+      success: true,
+      message: 'System settings updated successfully!',
+      settings: {
+        autoDeleteSeconds: Math.round(AUTO_DELETE_DELAY_MS / 1000),
+        freeDailyLimit: FREE_DAILY_LIMIT,
+        referralBonusPerUser: REFERRAL_BONUS_PER_USER,
+        officialGroupId: OFFICIAL_GROUP_ID,
+        officialGroupUrl: OFFICIAL_GROUP_URL,
+        officialGroupUsername: OFFICIAL_GROUP_USERNAME,
+        telegramActive: isTelegramPolling,
+      }
+    });
+  });
+
+  // ── ADMIN LIVE API TESTER / PLAYGROUND ──
+  app.post('/api/admin/test-api', async (req, res) => {
+    const { apiUrl, query } = req.body;
+    if (!apiUrl) {
+      return res.status(400).json({ success: false, error: 'API URL is required' });
+    }
+    const cleanQ = (query || '').trim();
+    const fullUrl = cleanQ ? `${apiUrl}${encodeURIComponent(cleanQ)}` : apiUrl;
+    const startTime = Date.now();
+    try {
+      const resp = await fetchWithTimeout(fullUrl, 15000);
+      const durationMs = Date.now() - startTime;
+      const jsonStr = typeof resp === 'string' ? resp : JSON.stringify(resp, null, 2);
+      const sizeChars = jsonStr.length;
+      const willSendAsTxt = sizeChars > 3400;
+
+      res.json({
+        success: true,
+        fullUrl,
+        durationMs,
+        data: resp,
+        sizeChars,
+        willSendAsTxt,
+      });
+    } catch (err: any) {
+      const durationMs = Date.now() - startTime;
+      res.status(500).json({
+        success: false,
+        fullUrl,
+        durationMs,
+        error: err.message || 'API request failed or timed out',
+      });
+    }
   });
 
   // OSINT Lookup Router

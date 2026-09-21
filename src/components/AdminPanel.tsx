@@ -30,9 +30,14 @@ import {
   Unlock,
   UserCheck,
   UserPlus,
-  Shield
+  Shield,
+  TestTube,
+  Settings2
 } from 'lucide-react';
 import type { StatsData, BotConfig, RedeemCode, BotButton, BotUser } from '../types';
+import { AdminGate } from './admin/AdminGate';
+import { ApiTesterTab } from './admin/ApiTesterTab';
+import { SystemSettingsTab } from './admin/SystemSettingsTab';
 
 interface AdminPanelProps {
   stats: StatsData;
@@ -42,6 +47,14 @@ interface AdminPanelProps {
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefreshStats, onButtonsUpdated }) => {
+  // Master Entrance Gate Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && sessionStorage.getItem('iramx_admin_auth') === 'true';
+  });
+
+  // Admin Navigation Sub-Tabs
+  const [activeSubTab, setActiveSubTab] = useState<'buttons' | 'playground' | 'users' | 'settings' | 'codes' | 'database'>('buttons');
+
   const [codes, setCodes] = useState<RedeemCode[]>([]);
   const [loadingCodes, setLoadingCodes] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -77,6 +90,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
   const [newUserRole, setNewUserRole] = useState<'free' | 'premium' | 'admin'>('free');
   const [newUserAllowDm, setNewUserAllowDm] = useState(true);
   const [addingUser, setAddingUser] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userFilter, setUserFilter] = useState<'all' | 'dm_allowed' | 'group_only' | 'vip'>('all');
 
   // SQL Modal / View State
   const [showSqlModal, setShowSqlModal] = useState(false);
@@ -498,6 +513,16 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
+  if (!isAuthenticated) {
+    return (
+      <AdminGate
+        stats={stats}
+        config={config}
+        onUnlock={() => setIsAuthenticated(true)}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Top Banner */}
@@ -519,19 +544,34 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
           </div>
         </div>
 
-        <button
-          id="admin-refresh-stats-btn"
-          onClick={() => {
-            onRefreshStats();
-            fetchCodes();
-            fetchButtons();
-            fetchUsers();
-          }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition cursor-pointer"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Refresh All</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            id="admin-refresh-stats-btn"
+            onClick={() => {
+              onRefreshStats();
+              fetchCodes();
+              fetchButtons();
+              fetchUsers();
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Refresh All</span>
+          </button>
+
+          <button
+            id="admin-lock-session-btn"
+            onClick={() => {
+              sessionStorage.removeItem('iramx_admin_auth');
+              setIsAuthenticated(false);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-xs font-medium transition cursor-pointer"
+            title="Lock Admin Session"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span>Lock</span>
+          </button>
+        </div>
       </div>
 
       {/* Metrics Row */}
@@ -571,7 +611,93 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
         </div>
       </div>
 
-      {/* Section 1: Broadcast Code Drop (First-Come, First-Served) */}
+      {/* Sub-Navigation Tabs */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('buttons')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+            activeSubTab === 'buttons'
+              ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20'
+              : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800'
+          }`}
+        >
+          <Sliders className="w-3.5 h-3.5" />
+          <span>Buttons & APIs ({buttons.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('playground')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+            activeSubTab === 'playground'
+              ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/20'
+              : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800'
+          }`}
+        >
+          <TestTube className="w-3.5 h-3.5" />
+          <span>Live API Tester</span>
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-500/30 text-indigo-200">New</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('users')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+            activeSubTab === 'users'
+              ? 'bg-emerald-600 text-white font-bold shadow-md shadow-emerald-600/20'
+              : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          <span>Users & DM Whitelist ({users.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('settings')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+            activeSubTab === 'settings'
+              ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/20'
+              : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800'
+          }`}
+        >
+          <Settings2 className="w-3.5 h-3.5" />
+          <span>Group & System Settings</span>
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-sky-500/30 text-sky-200">New</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('codes')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+            activeSubTab === 'codes'
+              ? 'bg-purple-600 text-white font-bold shadow-md shadow-purple-600/20'
+              : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800'
+          }`}
+        >
+          <Key className="w-3.5 h-3.5" />
+          <span>Redeem Codes & Broadcast</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('database')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+            activeSubTab === 'database'
+              ? 'bg-slate-700 text-white font-bold'
+              : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800'
+          }`}
+        >
+          <Database className="w-3.5 h-3.5" />
+          <span>Database & Daemon</span>
+        </button>
+      </div>
+
+      {/* Codes Tab Content */}
+      {activeSubTab === 'codes' && (
+        <div className="space-y-6">
+          {/* Section 1: Broadcast Code Drop (First-Come, First-Served) */}
       <div className="bg-gradient-to-br from-indigo-950/40 via-slate-900 to-purple-950/40 border border-indigo-500/30 rounded-2xl p-5 shadow-lg">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
@@ -840,9 +966,14 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
           </div>
         </form>
       </div>
+        </div>
+      )}
 
-      {/* Section: Dynamic Button & API Management (Admin Control) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
+      {/* Buttons Tab Content */}
+      {activeSubTab === 'buttons' && (
+        <div className="space-y-6">
+          {/* Section: Dynamic Button & API Management (Admin Control) */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400">
@@ -1179,78 +1310,50 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
           )}
         </div>
       </div>
-
-      {/* SQL Commands Modal */}
-      {showSqlModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-5 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <Database className="w-5 h-5 text-cyan-400" />
-                <h3 className="text-sm font-semibold text-white">Supabase SQL Schema Commands</h3>
-              </div>
-              <button onClick={() => setShowSqlModal(false)} className="text-slate-400 hover:text-white text-sm">
-                ✕
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Buttons aur APIs ki dynamic saving ke liye ye table <strong className="text-cyan-300">Supabase SQL Editor</strong> mein run karein:
-            </p>
-
-            <div className="relative">
-              <pre className="bg-slate-950 p-4 rounded-xl text-[11px] font-mono text-cyan-300 overflow-x-auto max-h-72 border border-slate-800">
-                {sqlCode}
-              </pre>
-              <button
-                onClick={copySqlToClipboard}
-                className="absolute top-2.5 right-2.5 flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold shadow transition cursor-pointer"
-              >
-                {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedSql ? 'Copied!' : 'Copy SQL'}</span>
-              </button>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={() => setShowSqlModal(false)}
-                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium transition"
-              >
-                Done
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
-      {/* Section: Telegram User Management & DM Whitelist */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
-              <Users className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h4 className="text-sm font-semibold text-white">Telegram Users & Private DM Access Whitelist</h4>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
-                  Group: -1002164265666
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Bot sirf authorized group (<a href="https://t.me/lookupXchat" target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline">@lookupXchat</a>) me work karta hai aur 40s me message delete ho jata hai. DM me bot tabhi chalega agar user yahan se Whitelisted ho.
-              </p>
-            </div>
-          </div>
+      {/* Live API Tester Tab */}
+      {activeSubTab === 'playground' && (
+        <ApiTesterTab buttons={buttons} />
+      )}
 
-          <button
-            onClick={fetchUsers}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition cursor-pointer"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loadingUsers ? 'animate-spin' : ''}`} />
-            <span>Reload Users</span>
-          </button>
-        </div>
+      {/* Group & System Settings Tab */}
+      {activeSubTab === 'settings' && (
+        <SystemSettingsTab config={config} onRefreshStats={onRefreshStats} />
+      )}
+
+      {/* Users Tab Content */}
+      {activeSubTab === 'users' && (
+        <div className="space-y-6">
+          {/* Section: Telegram User Management & DM Whitelist */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-semibold text-white">Telegram Users & Private DM Access Whitelist</h4>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
+                      Group: -1002164265666
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Bot sirf authorized group (<a href="https://t.me/lookupXchat" target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline">@lookupXchat</a>) me work karta hai aur 40s me message delete ho jata hai. DM me bot tabhi chalega agar user yahan se Whitelisted ho.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={fetchUsers}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingUsers ? 'animate-spin' : ''}`} />
+                <span>Reload Users</span>
+              </button>
+            </div>
 
         {/* User Action Message */}
         {userActionMsg && (
@@ -1329,6 +1432,79 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
           </div>
         </form>
 
+        {/* Search & Filter Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+            <div className="relative w-full">
+              <input
+                id="user-search-filter-input"
+                type="text"
+                value={userSearchQuery}
+                onChange={(e) => setUserSearchQuery(e.target.value)}
+                placeholder="Search by Telegram User ID or role..."
+                className="w-full bg-slate-950 border border-slate-700 text-white font-mono text-xs px-3 py-2 rounded-xl focus:border-emerald-500 focus:outline-none pl-8"
+              />
+              <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              {userSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setUserSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs cursor-pointer"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setUserFilter('all')}
+              className={`px-2.5 py-1.5 rounded-lg transition cursor-pointer text-xs ${
+                userFilter === 'all'
+                  ? 'bg-slate-700 text-white font-semibold'
+                  : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+              }`}
+            >
+              All ({users.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setUserFilter('dm_allowed')}
+              className={`px-2.5 py-1.5 rounded-lg transition cursor-pointer text-xs ${
+                userFilter === 'dm_allowed'
+                  ? 'bg-emerald-600 text-white font-semibold'
+                  : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+              }`}
+            >
+              DM Allowed ({users.filter(u => u.allowDm || u.role === 'admin').length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setUserFilter('group_only')}
+              className={`px-2.5 py-1.5 rounded-lg transition cursor-pointer text-xs ${
+                userFilter === 'group_only'
+                  ? 'bg-rose-600/80 text-white font-semibold'
+                  : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+              }`}
+            >
+              Group Only ({users.filter(u => !u.allowDm && u.role !== 'admin').length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setUserFilter('vip')}
+              className={`px-2.5 py-1.5 rounded-lg transition cursor-pointer text-xs ${
+                userFilter === 'vip'
+                  ? 'bg-cyan-600 text-white font-semibold'
+                  : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+              }`}
+            >
+              VIP / Admin ({users.filter(u => u.role === 'premium' || u.role === 'admin').length})
+            </button>
+          </div>
+        </div>
+
         {/* Users Table */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -1344,14 +1520,32 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {users.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="text-center py-6 text-slate-500">
-                    {loadingUsers ? 'Loading registered users...' : 'No users registered yet. Add a user ID above.'}
-                  </td>
-                </tr>
-              ) : (
-                users.map((u) => {
+              {(() => {
+                const filtered = users.filter((u) => {
+                  const q = userSearchQuery.trim().toLowerCase();
+                  const matchesSearch = !q ||
+                    String(u.userId).toLowerCase().includes(q) ||
+                    u.role.toLowerCase().includes(q);
+                  if (!matchesSearch) return false;
+                  if (userFilter === 'dm_allowed') return u.allowDm || u.role === 'admin';
+                  if (userFilter === 'group_only') return !u.allowDm && u.role !== 'admin';
+                  if (userFilter === 'vip') return u.role === 'premium' || u.role === 'admin';
+                  return true;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={7} className="text-center py-6 text-slate-500">
+                        {userSearchQuery || userFilter !== 'all'
+                          ? 'No users matching the active filter criteria.'
+                          : (loadingUsers ? 'Loading registered users...' : 'No users registered yet. Add a user ID above.')}
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return filtered.map((u) => {
                   const isUserAdmin = u.role === 'admin';
                   return (
                     <tr key={u.userId} className="hover:bg-slate-800/40 transition">
@@ -1429,65 +1623,97 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                       </td>
                     </tr>
                   );
-                })
-              )}
+                });
+              })()}
             </tbody>
           </table>
         </div>
       </div>
-
-      {/* Telegram Bot Integration Card */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2">
-            <Radio className={`w-4 h-4 ${config.telegramActive ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
-            <h4 className="text-sm font-semibold text-white">Telegram Daemon & Commands</h4>
-          </div>
-          <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium border ${
-            config.telegramActive
-              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-              : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-          }`}>
-            {config.telegramActive ? '🟢 Polling Active' : '🟡 Standby / Token Required'}
-          </span>
         </div>
+      )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-          <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-1.5">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Bot Handle:</span>
-              <span className="text-indigo-300 font-mono">@{config.botUsername}</span>
+      {/* Database & Daemon Tab Content */}
+      {activeSubTab === 'database' && (
+        <div className="space-y-6">
+          {/* Supabase SQL Schema Commands */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-lg">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-sm font-semibold text-white">Supabase SQL Schema Commands</h3>
+              </div>
+              <button
+                onClick={copySqlToClipboard}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold shadow transition cursor-pointer"
+              >
+                {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedSql ? 'Copied!' : 'Copy SQL Script'}</span>
+              </button>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Version:</span>
-              <span className="text-slate-200">v{config.botVersion}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Primary Channel:</span>
-              <a href={config.channelLink} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline inline-flex items-center gap-1">
-                {config.channelUsername}
-                <ExternalLink className="w-2.5 h-2.5" />
-              </a>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Developer:</span>
-              <a href={config.developerLink} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline">
-                {config.developer}
-              </a>
-            </div>
-          </div>
 
-          <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 flex flex-col justify-between">
-            <p className="text-slate-300 leading-relaxed font-mono text-[11px]">
-              👑 Admin Telegram Commands:
-              <br />• <code className="text-cyan-300">/gen &lt;days&gt;</code> ➜ Gen code with custom days
-              <br />• <code className="text-cyan-300">/dropcode &lt;days&gt;</code> ➜ Broadcast 1-use code (First-Come)
-              <br />• <code className="text-cyan-300">/broadcast &lt;msg&gt;</code> ➜ Send announcement to all
-              <br />• <code className="text-cyan-300">/admin</code> ➜ View live metrics
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Buttons aur APIs ki persistent dynamic storage ke liye ye SQL commands <strong className="text-cyan-300">Supabase SQL Editor</strong> mein run karein:
             </p>
+
+            <pre className="bg-slate-950 p-4 rounded-xl text-[11px] font-mono text-cyan-300 overflow-x-auto max-h-72 border border-slate-800">
+              {sqlCode}
+            </pre>
+          </div>
+
+          {/* Telegram Bot Integration Card */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2">
+                <Radio className={`w-4 h-4 ${config.telegramActive ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
+                <h4 className="text-sm font-semibold text-white">Telegram Daemon & Commands</h4>
+              </div>
+              <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium border ${
+                config.telegramActive
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+              }`}>
+                {config.telegramActive ? '🟢 Polling Active' : '🟡 Standby / Token Required'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Bot Handle:</span>
+                  <span className="text-indigo-300 font-mono">@{config.botUsername}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Version:</span>
+                  <span className="text-slate-200">v{config.botVersion}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Primary Channel:</span>
+                  <a href={config.channelLink} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline inline-flex items-center gap-1">
+                    {config.channelUsername}
+                    <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Developer:</span>
+                  <a href={config.developerLink} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline">
+                    {config.developer}
+                  </a>
+                </div>
+              </div>
+
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 flex flex-col justify-between">
+                <p className="text-slate-300 leading-relaxed font-mono text-[11px]">
+                  👑 Admin Telegram Commands:
+                  <br />• <code className="text-cyan-300">/gen &lt;days&gt;</code> ➜ Gen code with custom days
+                  <br />• <code className="text-cyan-300">/dropcode &lt;days&gt;</code> ➜ Broadcast 1-use code (First-Come)
+                  <br />• <code className="text-cyan-300">/broadcast &lt;msg&gt;</code> ➜ Send announcement to all
+                  <br />• <code className="text-cyan-300">/admin</code> ➜ View live metrics
+                </p>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
