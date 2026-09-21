@@ -65,6 +65,8 @@ export interface BotButton {
 
 export interface BotUser {
   userId: string;
+  username?: string;
+  firstName?: string;
   role: 'admin' | 'premium' | 'free';
   dailySearches: number;
   dailyLimit: number;
@@ -74,8 +76,10 @@ export interface BotUser {
   referralCount: number;
   referralBonusDaily?: number;
   allowDm: boolean;
-  lastSearchDate: string;
+  lastSearchDate?: string;
   dailyButtonUsage?: Record<string, number>;
+  lastActive?: string;
+  createdAt?: string;
 }
 
 export interface RedeemCode {

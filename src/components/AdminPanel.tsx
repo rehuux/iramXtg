@@ -222,6 +222,64 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
     }
   };
 
+  const handleResetUserSearches = async (userId: string) => {
+    try {
+      const res = await fetch('/api/admin/users/reset-searches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUserActionMsg({ type: 'success', text: `Daily searches for user ${userId} reset to 0!` });
+        fetchUsers();
+      } else {
+        setUserActionMsg({ type: 'error', text: data.error || 'Failed to reset searches.' });
+      }
+    } catch (e: any) {
+      setUserActionMsg({ type: 'error', text: e.message || 'Error resetting searches.' });
+    }
+  };
+
+  const handleAddBonusSearches = async (userId: string, amount: number = 10) => {
+    try {
+      const res = await fetch('/api/admin/users/add-bonus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, amount }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUserActionMsg({ type: 'success', text: `Added +${amount} searches to user ${userId}!` });
+        fetchUsers();
+      } else {
+        setUserActionMsg({ type: 'error', text: data.error || 'Failed to add bonus searches.' });
+      }
+    } catch (e: any) {
+      setUserActionMsg({ type: 'error', text: e.message || 'Error adding bonus.' });
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    if (!window.confirm(`Are you sure you want to remove User ${userId}?`)) return;
+    try {
+      const res = await fetch('/api/admin/users/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUserActionMsg({ type: 'success', text: `User ${userId} deleted.` });
+        setUsers((prev) => prev.filter((u) => u.userId !== userId));
+      } else {
+        setUserActionMsg({ type: 'error', text: data.error || 'Failed to delete user.' });
+      }
+    } catch (e: any) {
+      setUserActionMsg({ type: 'error', text: e.message || 'Error deleting user.' });
+    }
+  };
+
   const handleToggleButton = async (btn: BotButton) => {
     try {
       const res = await fetch('/api/admin/buttons/toggle', {
@@ -1335,24 +1393,35 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-semibold text-white">Telegram Users & Private DM Access Whitelist</h4>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
-                      Group: -1002164265666
+                    <h4 className="text-sm font-semibold text-white">Telegram Users Intelligence & DM Whitelist</h4>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                      Active Database
                     </span>
                   </div>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Bot sirf authorized group (<a href="https://t.me/lookupXchat" target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline">@lookupXchat</a>) me work karta hai aur 40s me message delete ho jata hai. DM me bot tabhi chalega agar user yahan se Whitelisted ho.
+                    Bot lookups official community (<a href="https://t.me/lookupXchat" target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline">@lookupXchat</a>) me auto-destruct delay ke sath work karte hain. Private DM access ke liye yahan se user whitelist karein.
                   </p>
                 </div>
               </div>
 
-              <button
-                onClick={fetchUsers}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition cursor-pointer"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loadingUsers ? 'animate-spin' : ''}`} />
-                <span>Reload Users</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <a
+                  href="/api/admin/users/export-text"
+                  download
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow transition cursor-pointer"
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  <span>Export Users (.txt)</span>
+                </a>
+
+                <button
+                  onClick={fetchUsers}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingUsers ? 'animate-spin' : ''}`} />
+                  <span>Reload Users</span>
+                </button>
+              </div>
             </div>
 
         {/* User Action Message */}
@@ -1400,7 +1469,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                 onChange={(e) => setNewUserRole(e.target.value as any)}
                 className="w-full bg-slate-900 text-white text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-emerald-500 focus:outline-none"
               >
-                <option value="free">Free User (20 searches/day)</option>
+                <option value="free">Free User (Standard Limit)</option>
                 <option value="premium">VIP Premium (Unlimited searches)</option>
                 <option value="admin">Admin (Full Control & DM)</option>
               </select>
@@ -1441,7 +1510,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                 type="text"
                 value={userSearchQuery}
                 onChange={(e) => setUserSearchQuery(e.target.value)}
-                placeholder="Search by Telegram User ID or role..."
+                placeholder="Search by User ID, handle @username, or role..."
                 className="w-full bg-slate-950 border border-slate-700 text-white font-mono text-xs px-3 py-2 rounded-xl focus:border-emerald-500 focus:outline-none pl-8"
               />
               <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -1510,13 +1579,12 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px] tracking-wider">
-                <th className="py-2.5 px-3">Telegram User ID</th>
-                <th className="py-2.5 px-3">Role</th>
-                <th className="py-2.5 px-3">Private DM Access</th>
-                <th className="py-2.5 px-3">Today's Lookups</th>
-                <th className="py-2.5 px-3">Referrals</th>
-                <th className="py-2.5 px-3">Button Breakdown</th>
-                <th className="py-2.5 px-3 text-right">DM Toggle</th>
+                <th className="py-3 px-3">Agent / User</th>
+                <th className="py-3 px-3">Role Tier</th>
+                <th className="py-3 px-3">Private DM Access</th>
+                <th className="py-3 px-3">Today's Lookups</th>
+                <th className="py-3 px-3">Invites</th>
+                <th className="py-3 px-3 text-right">Actions & Quota</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
@@ -1525,6 +1593,8 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                   const q = userSearchQuery.trim().toLowerCase();
                   const matchesSearch = !q ||
                     String(u.userId).toLowerCase().includes(q) ||
+                    (u.username && u.username.toLowerCase().includes(q)) ||
+                    (u.firstName && u.firstName.toLowerCase().includes(q)) ||
                     u.role.toLowerCase().includes(q);
                   if (!matchesSearch) return false;
                   if (userFilter === 'dm_allowed') return u.allowDm || u.role === 'admin';
@@ -1536,7 +1606,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                 if (filtered.length === 0) {
                   return (
                     <tr>
-                      <td colSpan={7} className="text-center py-6 text-slate-500">
+                      <td colSpan={6} className="text-center py-6 text-slate-500">
                         {userSearchQuery || userFilter !== 'all'
                           ? 'No users matching the active filter criteria.'
                           : (loadingUsers ? 'Loading registered users...' : 'No users registered yet. Add a user ID above.')}
@@ -1547,14 +1617,36 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
 
                 return filtered.map((u) => {
                   const isUserAdmin = u.role === 'admin';
+                  const isVIP = u.role === 'premium';
+                  const limitStr = isVIP || isUserAdmin ? '∞' : u.dailyLimit;
+                  const isExhausted = !isVIP && !isUserAdmin && (u.dailySearches || 0) >= (u.dailyLimit || 20);
+
                   return (
                     <tr key={u.userId} className="hover:bg-slate-800/40 transition">
-                      <td className="py-2.5 px-3 font-mono font-bold text-white flex items-center gap-1.5">
-                        {isUserAdmin && <Shield className="w-3.5 h-3.5 text-amber-400" />}
-                        <span>{u.userId}</span>
+                      <td className="py-3 px-3 font-mono text-white">
+                        <div className="flex items-center gap-2">
+                          {isUserAdmin ? (
+                            <Shield className="w-4 h-4 text-amber-400 shrink-0" />
+                          ) : isVIP ? (
+                            <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
+                          ) : (
+                            <Users className="w-4 h-4 text-slate-500 shrink-0" />
+                          )}
+                          <div>
+                            <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                              <span>{u.firstName || (u.username ? '@' + u.username : 'Agent')}</span>
+                              {u.username && (
+                                <span className="text-[10px] text-cyan-400 font-normal">@{u.username}</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono tracking-wider">
+                              ID: {u.userId}
+                            </div>
+                          </div>
+                        </div>
                       </td>
 
-                      <td className="py-2.5 px-3">
+                      <td className="py-3 px-3">
                         <select
                           value={u.role}
                           onChange={(e) => handleChangeRole(u.userId, e.target.value)}
@@ -1566,7 +1658,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                         </select>
                       </td>
 
-                      <td className="py-2.5 px-3">
+                      <td className="py-3 px-3">
                         {isUserAdmin || u.allowDm ? (
                           <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-medium flex items-center gap-1 w-max">
                             <Unlock className="w-3 h-3 text-emerald-400" />
@@ -1580,46 +1672,91 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                         )}
                       </td>
 
-                      <td className="py-2.5 px-3 text-slate-300">
-                        <span className="font-mono font-semibold">{u.dailySearches}</span>
-                        <span className="text-slate-500"> / {u.role === 'free' ? u.dailyLimit : '∞'}</span>
+                      <td className="py-3 px-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <span className={`font-mono font-bold ${isExhausted ? 'text-rose-400' : 'text-emerald-400'}`}>
+                              {u.dailySearches || 0}
+                            </span>
+                            <span className="text-slate-500 font-mono">/ {limitStr}</span>
+                            <span className="text-[10px] text-slate-400">
+                              (Tot: {u.totalSearches || 0})
+                            </span>
+                          </div>
+                          {!isVIP && !isUserAdmin && (
+                            <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${
+                                  isExhausted ? 'bg-rose-500' : 'bg-emerald-500'
+                                }`}
+                                style={{
+                                  width: `${Math.min(100, ((u.dailySearches || 0) / (u.dailyLimit || 20)) * 100)}%`
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
                       </td>
 
-                      <td className="py-2.5 px-3 text-slate-300">
+                      <td className="py-3 px-3 text-slate-300">
                         {u.referralCount ? (
-                          <span className="text-cyan-400 font-semibold font-mono">
-                            {u.referralCount} (+{u.referralBonusDaily || u.referralCount * 10}/day)
+                          <span className="text-cyan-400 font-semibold font-mono text-xs">
+                            {u.referralCount} (+{u.referralBonusDaily || u.referralCount * 10}/d)
                           </span>
                         ) : (
-                          <span className="text-slate-500">0</span>
+                          <span className="text-slate-600 font-mono text-xs">0</span>
                         )}
                       </td>
 
-                      <td className="py-2.5 px-3 text-[11px] font-mono text-slate-400 max-w-xs truncate">
-                        {u.dailyButtonUsage && Object.keys(u.dailyButtonUsage).length > 0 ? (
-                          Object.entries(u.dailyButtonUsage)
-                            .map(([btnKey, count]) => `${btnKey}:${count}`)
-                            .join(', ')
-                        ) : (
-                          <span className="text-slate-600">—</span>
-                        )}
-                      </td>
-
-                      <td className="py-2.5 px-3 text-right">
-                        {isUserAdmin ? (
-                          <span className="text-[10px] text-amber-400 font-mono">Master</span>
-                        ) : (
+                      <td className="py-3 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Reset Daily Searches */}
                           <button
-                            onClick={() => handleToggleDm(u.userId, Boolean(u.allowDm))}
-                            className={`px-2.5 py-1 rounded text-[11px] font-medium transition cursor-pointer border ${
-                              u.allowDm
-                                ? 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
-                                : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25'
-                            }`}
+                            type="button"
+                            onClick={() => handleResetUserSearches(u.userId)}
+                            title="Reset daily searches to 0"
+                            className="px-2 py-1 rounded text-[10px] font-medium bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition cursor-pointer"
                           >
-                            {u.allowDm ? 'Block DM' : 'Allow DM'}
+                            Reset
                           </button>
-                        )}
+
+                          {/* +10 Bonus searches */}
+                          <button
+                            type="button"
+                            onClick={() => handleAddBonusSearches(u.userId, 10)}
+                            title="Grant +10 bonus searches today"
+                            className="px-2 py-1 rounded text-[10px] font-medium bg-indigo-900/40 hover:bg-indigo-800/60 text-indigo-300 border border-indigo-700/50 transition cursor-pointer"
+                          >
+                            +10 Q
+                          </button>
+
+                          {/* Toggle DM access */}
+                          {!isUserAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleDm(u.userId, Boolean(u.allowDm))}
+                              className={`px-2 py-1 rounded text-[10px] font-medium transition cursor-pointer border ${
+                                u.allowDm
+                                  ? 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
+                                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25'
+                              }`}
+                            >
+                              {u.allowDm ? 'Block DM' : 'Allow DM'}
+                            </button>
+                          )}
+
+                          {/* Delete user */}
+                          {!isUserAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteUser(u.userId)}
+                              title="Delete user"
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

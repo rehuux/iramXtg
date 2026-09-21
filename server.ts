@@ -202,6 +202,8 @@ let REFERRAL_BONUS_PER_USER = 10; // +10 extra credit daily per referral!
 // ── IN-MEMORY STORE ──
 interface UserRecord {
   userId: number | string;
+  username?: string;
+  firstName?: string;
   role: 'admin' | 'premium' | 'free';
   dailySearches: number;
   lastSearchDate: string;
@@ -214,6 +216,8 @@ interface UserRecord {
   referredUsers: string[];
   allowDm?: boolean;
   dailyButtonUsage?: Record<string, number>;
+  lastActive?: string;
+  createdAt?: string;
 }
 
 interface RedeemCodeRecord {
@@ -243,6 +247,8 @@ async function loadUsersFromSupabase(): Promise<void> {
       for (const row of data) {
         usersStore.set(row.id, {
           userId: row.id,
+          username: row.username || undefined,
+          firstName: row.first_name || undefined,
           role: row.role || 'free',
           dailySearches: Number(row.daily_searches) || 0,
           lastSearchDate: row.last_search_date || getTodayString(),
@@ -253,6 +259,8 @@ async function loadUsersFromSupabase(): Promise<void> {
           referralBonusDaily: Number(row.referral_bonus_daily) || 0,
           referredUsers: [],
           allowDm: Boolean(row.allow_dm),
+          lastActive: row.last_active || row.updated_at || undefined,
+          createdAt: row.created_at || undefined,
         });
       }
       console.log(`📦 Loaded & restored ${data.length} users from Supabase permanent database.`);
@@ -265,7 +273,7 @@ async function loadUsersFromSupabase(): Promise<void> {
 async function persistUser(user: UserRecord): Promise<void> {
   if (!supabase) return;
   try {
-    const { error } = await supabase.from('bot_users').upsert({
+    const payload: any = {
       id: String(user.userId),
       role: user.role,
       daily_searches: user.dailySearches,
@@ -277,9 +285,21 @@ async function persistUser(user: UserRecord): Promise<void> {
       referral_bonus_daily: user.referralBonusDaily || 0,
       allow_dm: Boolean(user.allowDm),
       updated_at: new Date().toISOString()
-    }, { onConflict: 'id' });
+    };
+    if (user.username) payload.username = user.username;
+    if (user.firstName) payload.first_name = user.firstName;
+    if (user.lastActive) payload.last_active = user.lastActive;
+
+    const { error } = await supabase.from('bot_users').upsert(payload, { onConflict: 'id' });
     if (error) {
-      console.error(`⚠️ Failed to persist user ${user.userId} to Supabase:`, error.message);
+      if (error.message && (error.message.includes('column') || error.message.includes('schema'))) {
+        delete payload.username;
+        delete payload.first_name;
+        delete payload.last_active;
+        await supabase.from('bot_users').upsert(payload, { onConflict: 'id' });
+      } else {
+        console.error(`⚠️ Failed to persist user ${user.userId} to Supabase:`, error.message);
+      }
     }
   } catch (err: any) {
     console.error(`⚠️ Supabase persist exception for user ${user.userId}:`, err?.message || err);
@@ -383,6 +403,14 @@ function getTodayString(): string {
   return new Date().toISOString().split('T')[0];
 }
 
+function getUserTodaySearches(user: UserRecord): number {
+  const today = getTodayString();
+  if (user.lastSearchDate !== today) {
+    return 0;
+  }
+  return user.dailySearches || 0;
+}
+
 function getUserDailyLimit(user: UserRecord): number {
   if (user.role === 'admin' || user.role === 'premium') return 999;
   const bonus = (user.referralCount || 0) * REFERRAL_BONUS_PER_USER;
@@ -392,7 +420,8 @@ function getUserDailyLimit(user: UserRecord): number {
 function getUserRemaining(user: UserRecord): number {
   if (user.role === 'admin' || user.role === 'premium') return 999;
   const limit = getUserDailyLimit(user);
-  return Math.max(0, limit - user.dailySearches);
+  const used = getUserTodaySearches(user);
+  return Math.max(0, limit - used);
 }
 
 function getUser(userId: string | number): UserRecord {
@@ -413,6 +442,8 @@ function getUser(userId: string | number): UserRecord {
       referredUsers: [],
       allowDm: idStr === String(ADMIN_USER_ID),
       dailyButtonUsage: {},
+      createdAt: new Date().toISOString(),
+      lastActive: new Date().toISOString(),
     };
     usersStore.set(idStr, user);
     persistUser(user).catch(() => {});
@@ -426,13 +457,22 @@ function getUser(userId: string | number): UserRecord {
 }
 
 function getUserButtonUsage(user: UserRecord, buttonId: string): number {
+  const today = getTodayString();
+  if (user.lastSearchDate !== today) return 0;
   if (!user.dailyButtonUsage) user.dailyButtonUsage = {};
   return user.dailyButtonUsage[buttonId] || 0;
 }
 
 function recordButtonUsage(user: UserRecord, buttonId: string): void {
+  const today = getTodayString();
+  if (user.lastSearchDate !== today) {
+    user.dailySearches = 0;
+    user.dailyButtonUsage = {};
+    user.lastSearchDate = today;
+  }
   if (!user.dailyButtonUsage) user.dailyButtonUsage = {};
   user.dailyButtonUsage[buttonId] = (user.dailyButtonUsage[buttonId] || 0) + 1;
+  user.lastActive = new Date().toISOString();
   persistUser(user).catch(() => {});
 }
 
@@ -467,8 +507,15 @@ function checkAndEnforceButtonLimit(user: UserRecord, buttonId: string): { allow
 
 function recordSearch(userId: string | number): void {
   const user = getUser(userId);
-  user.dailySearches += 1;
-  user.totalSearches += 1;
+  const today = getTodayString();
+  if (user.lastSearchDate !== today) {
+    user.dailySearches = 0;
+    user.dailyButtonUsage = {};
+    user.lastSearchDate = today;
+  }
+  user.dailySearches = (user.dailySearches || 0) + 1;
+  user.totalSearches = (user.totalSearches || 0) + 1;
+  user.lastActive = new Date().toISOString();
   allTimeSearchesCount += 1;
   persistUser(user).catch(() => {});
 }
@@ -1155,38 +1202,217 @@ function getAdminInlineKeyboard(active: boolean) {
     inline_keyboard: [
       [
         {
-          text: active ? "🔴 Turn Bot OFF (Maintenance)" : "🟢 Turn Bot ON (Online)",
+          text: active ? "🔴 Turn Bot OFF" : "🟢 Turn Bot ON",
           callback_data: "admin_toggle_bot"
-        }
+        },
+        { text: "🔄 Refresh Metrics", callback_data: "admin_refresh_stats" }
       ],
       [
-        { text: "👥 Registered Users List", callback_data: "admin_list_users" },
-        { text: "💎 VIP Premium Users", callback_data: "admin_list_premium" }
+        { text: "👥 Users & Quota Manager", callback_data: "admin_menu_users" },
+        { text: "💬 DM Access Whitelist", callback_data: "admin_menu_dm" }
       ],
       [
-        { text: "🚫 Revoke Premium (ID)", callback_data: "admin_remove_prem_prompt" },
-        { text: "➕ Grant Premium (ID)", callback_data: "admin_add_prem_prompt" }
+        { text: "⏱️ Auto-Delete Delay", callback_data: "admin_menu_autodelete" },
+        { text: "🔢 Free Daily Limit", callback_data: "admin_menu_dailyquota" }
       ],
       [
-        { text: "🚀 Drop Code (7D)", callback_data: "admin_drop_7" },
-        { text: "🚀 Drop Code (30D)", callback_data: "admin_drop_30" }
+        { text: "🎛️ Manage Buttons & APIs", callback_data: "admin_buttons_list" },
+        { text: "📢 Global Announcement", callback_data: "admin_broadcast_prompt" }
       ],
       [
-        { text: "💎 Gen 30D VIP Code", callback_data: "admin_gen_30" },
-        { text: "💎 Gen 365D VIP Code", callback_data: "admin_gen_365" }
+        { text: "🚀 Drop Code (First-Come)", callback_data: "admin_drop_7" },
+        { text: "💎 Gen VIP Key (30D)", callback_data: "admin_gen_30" }
       ],
       [
-        { text: "🎛️ Manage Bot Buttons & APIs", callback_data: "admin_buttons_list" }
-      ],
-      [
-        { text: "📢 Broadcast Announcement", callback_data: "admin_broadcast_prompt" },
-        { text: "🔄 Refresh Stats", callback_data: "admin_refresh_stats" }
-      ],
-      [
-        { text: "🏠 Return to Main Menu", callback_data: "action_main" }
+        { text: "📄 Export Users File (.txt)", callback_data: "admin_users_export" },
+        { text: "🏠 Main Menu", callback_data: "action_main" }
       ]
     ]
   };
+}
+
+function getAdminUsersMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: "🔥 Active Users Today", callback_data: "admin_users_active" },
+        { text: "💎 VIP Members List", callback_data: "admin_list_premium" }
+      ],
+      [
+        { text: "📋 Full Users Summary", callback_data: "admin_users_all" },
+        { text: "📄 Export Users (.txt)", callback_data: "admin_users_export" }
+      ],
+      [
+        { text: "🔍 Inspect User (/user ID)", callback_data: "admin_inspect_prompt" },
+        { text: "➕ Grant VIP (/add_prem)", callback_data: "admin_add_prem_prompt" }
+      ],
+      [
+        { text: "🚫 Revoke VIP (/rem_prem)", callback_data: "admin_remove_prem_prompt" },
+        { text: "🔄 Reset Daily Limits", callback_data: "admin_reset_all_searches" }
+      ],
+      [
+        { text: "🔙 Back to Admin Master", callback_data: "admin_back_to_panel" }
+      ]
+    ]
+  };
+}
+
+function getAdminDmMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: "📋 Whitelisted DM Users", callback_data: "admin_dm_list" }
+      ],
+      [
+        { text: "🟢 Quick Allow DM (ID)", callback_data: "admin_allow_dm_prompt" },
+        { text: "🔴 Quick Revoke DM (ID)", callback_data: "admin_revoke_dm_prompt" }
+      ],
+      [
+        { text: "🔙 Back to Admin Master", callback_data: "admin_back_to_panel" }
+      ]
+    ]
+  };
+}
+
+function getAdminAutoDeleteKeyboard(currentMs: number) {
+  const curSec = Math.round(currentMs / 1000);
+  return {
+    inline_keyboard: [
+      [
+        { text: curSec === 15 ? "🔘 15s (Active)" : "15s", callback_data: "admin_set_delay_15" },
+        { text: curSec === 30 ? "🔘 30s (Active)" : "30s", callback_data: "admin_set_delay_30" },
+        { text: curSec === 40 ? "🔘 40s (Active)" : "40s", callback_data: "admin_set_delay_40" }
+      ],
+      [
+        { text: curSec === 60 ? "🔘 60s (Active)" : "60s", callback_data: "admin_set_delay_60" },
+        { text: curSec === 120 ? "🔘 120s (Active)" : "120s", callback_data: "admin_set_delay_120" },
+        { text: currentMs === 0 ? "🔘 Off (Active)" : "🚫 Disabled", callback_data: "admin_set_delay_0" }
+      ],
+      [
+        { text: "🔙 Back to Admin Master", callback_data: "admin_back_to_panel" }
+      ]
+    ]
+  };
+}
+
+function getAdminQuotaKeyboard(currentLimit: number) {
+  return {
+    inline_keyboard: [
+      [
+        { text: currentLimit === 10 ? "🔘 10 / day" : "10 / day", callback_data: "admin_set_quota_10" },
+        { text: currentLimit === 20 ? "🔘 20 / day" : "20 / day", callback_data: "admin_set_quota_20" },
+        { text: currentLimit === 30 ? "🔘 30 / day" : "30 / day", callback_data: "admin_set_quota_30" }
+      ],
+      [
+        { text: currentLimit === 50 ? "🔘 50 / day" : "50 / day", callback_data: "admin_set_quota_50" },
+        { text: currentLimit === 100 ? "🔘 100 / day" : "100 / day", callback_data: "admin_set_quota_100" }
+      ],
+      [
+        { text: "🔙 Back to Admin Master", callback_data: "admin_back_to_panel" }
+      ]
+    ]
+  };
+}
+
+function getUserDossierKeyboard(targetUserId: string | number, allowDm: boolean, role: string) {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: allowDm ? "🔴 Revoke DM Access" : "🟢 Allow Private DM",
+          callback_data: allowDm ? `admin_act_revokedm_${targetUserId}` : `admin_act_allowdm_${targetUserId}`
+        },
+        {
+          text: role === 'premium' ? "🆓 Demote to Free" : "💎 Grant VIP",
+          callback_data: role === 'premium' ? `admin_act_demote_${targetUserId}` : `admin_act_vip_${targetUserId}`
+        }
+      ],
+      [
+        { text: "🔄 Reset Searches (0)", callback_data: `admin_act_reset_${targetUserId}` },
+        { text: "➕ Add +10 Searches", callback_data: `admin_act_add10_${targetUserId}` }
+      ],
+      [
+        { text: "✉️ Send Direct Message", callback_data: `admin_act_msg_${targetUserId}` },
+        { text: "🔙 Back to Users", callback_data: "admin_menu_users" }
+      ]
+    ]
+  };
+}
+
+function getUserDossierCard(user: UserRecord): string {
+  const today = getTodayString();
+  const isToday = user.lastSearchDate === today;
+  const todayUsed = isToday ? (user.dailySearches || 0) : 0;
+  const limit = getUserDailyLimit(user);
+  const remaining = getUserRemaining(user);
+  const handle = user.username ? `@${user.username}` : 'No username';
+  const name = user.firstName || 'Unknown';
+  const isDm = user.allowDm || user.role === 'admin';
+  const roleLabel = user.role === 'admin' ? '👑 ADMIN' : user.role === 'premium' ? '💎 VIP PREMIUM' : '🆓 FREE TIER';
+
+  let breakdownStr = '';
+  if (isToday && user.dailyButtonUsage && Object.keys(user.dailyButtonUsage).length > 0) {
+    breakdownStr = Object.entries(user.dailyButtonUsage)
+      .map(([k, v]) => `• \`${k}\`: *${v}*`)
+      .join('\n');
+  } else {
+    breakdownStr = '• _No services used yet today_';
+  }
+
+  return `👤 *USER INTELLIGENCE DOSSIER*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+• 👤 *Name:* *${name}* (${handle})
+• 🆔 *User ID:* \`${user.userId}\`
+• 🎖️ *Role Tier:* \`${roleLabel}\`
+• 💬 *Private DM Access:* ${isDm ? '🟢 ALLOWED (Whitelisted)' : '🔴 GROUP ONLY (Locked)'}
+• 📢 *Channel Gate:* ${user.channelVerified ? '✅ Verified' : '⚠️ Pending'}
+
+📈 *LOOKUPS & USAGE ACTIVITY:*
+• 🔥 *Today's Searches:* *${todayUsed}* / ${user.role === 'free' ? limit : '∞'}
+• ⚡ *Left Today:* *${remaining}* lookups
+• 📊 *Lifetime Searches:* *${user.totalSearches || 0}* queries
+• 👥 *Referrals:* *${user.referralCount || 0}* (+${(user.referralCount || 0) * REFERRAL_BONUS_PER_USER} daily bonus)
+• 📅 *Last Active:* \`${user.lastActive ? user.lastActive.replace('T', ' ').slice(0, 19) : (user.lastSearchDate || 'Recently')}\`
+
+🎛️ *Services Used Today:*
+${breakdownStr}
+━━━━━━━━━━━━━━━━━━━━━━━━━
+👇 *Quick Actions for this user:*`;
+}
+
+async function exportUsersToTelegram(chatId: string | number): Promise<void> {
+  const today = getTodayString();
+  const allUsers = Array.from(usersStore.values());
+  let content = `IRAM OSINT BOT — USERS INTELLIGENCE REPORT\n`;
+  content += `Generated At: ${new Date().toISOString()}\n`;
+  content += `Total Registered Users: ${allUsers.length}\n`;
+  content += `Today's Date: ${today}\n`;
+  content += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  content += `NO  | USER ID     | USERNAME           | ROLE    | TODAY | LIMIT | TOTAL | DM? | LAST ACTIVE\n`;
+  content += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+  allUsers.forEach((u, idx) => {
+    const isToday = u.lastSearchDate === today;
+    const todaySearches = isToday ? (u.dailySearches || 0) : 0;
+    const limit = u.role === 'admin' || u.role === 'premium' ? 'UNLTD' : String(getUserDailyLimit(u));
+    const handle = u.username ? `@${u.username}` : (u.firstName || '-');
+    const dm = (u.allowDm || u.role === 'admin') ? 'YES' : 'NO';
+    const active = u.lastActive ? u.lastActive.split('T')[0] : (u.lastSearchDate || '-');
+    
+    content += `${String(idx + 1).padEnd(3)} | ` +
+      `${String(u.userId).padEnd(11)} | ` +
+      `${handle.padEnd(18).slice(0, 18)} | ` +
+      `${u.role.toUpperCase().padEnd(7)} | ` +
+      `${String(todaySearches).padEnd(5)} | ` +
+      `${limit.padEnd(5)} | ` +
+      `${String(u.totalSearches || 0).padEnd(5)} | ` +
+      `${dm.padEnd(3)} | ` +
+      `${active}\n`;
+  });
+
+  content += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  const filename = `bot_users_report_${today}.txt`;
+  await sendTelegramDocument(chatId, filename, content, `📄 *ALL USERS REPORT (${allUsers.length} Users)*\nExport complete with accurate daily searches, total searches & DM statuses.`);
 }
 
 function getAdminControlCard(active: boolean): string {
@@ -1195,36 +1421,48 @@ function getAdminControlCard(active: boolean): string {
   const activeCodes = Array.from(redeemCodes.values()).filter(c => c.usesLeft > 0).length;
   const today = getTodayString();
   let todaySearches = 0;
+  let activeUsersToday = 0;
+  let dmAllowedCount = 0;
+
   for (const u of usersStore.values()) {
-    if (u.lastSearchDate === today) {
+    if (u.allowDm || u.role === 'admin') dmAllowedCount += 1;
+    if (u.lastSearchDate === today && (u.dailySearches || 0) > 0) {
       todaySearches += u.dailySearches;
+      activeUsersToday += 1;
     }
   }
 
+  const delaySec = AUTO_DELETE_DELAY_MS > 0 ? `${Math.round(AUTO_DELETE_DELAY_MS / 1000)}s` : 'Disabled';
+
   return `👑 *ADMINISTRATOR MASTER CONTROL PANEL*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 *Bot Service Status:* ${active ? "🟢 *ONLINE (Active)*" : "🔴 *OFFLINE (Maintenance Mode)*"}
-⚡ *Mode:* ${active ? "All users can perform OSINT lookups" : "⚠️ Lookups paused for regular users (Admin only)"}
+🤖 *Service Status:* ${active ? "🟢 *ONLINE (Active)*" : "🔴 *OFFLINE (Maintenance)*"}
+👥 *Official Group:* \`${OFFICIAL_GROUP_USERNAME}\`
+⏱️ *Group Auto-Delete:* \`${delaySec}\`
+⚡ *Free Daily Limit:* \`${FREE_DAILY_LIMIT} lookups/day\`
 
-📊 *Live Telemetry & Metrics:*
+📊 *TELEMETRY & REAL-TIME STATS:*
 • 👥 *Registered Users:* \`${totalUsers}\`
-• 💎 *VIP Premium Users:* \`${premiumUsers}\`
-• 🔍 *Today's Searches:* \`${todaySearches}\`
+• 🔥 *Active Users Today:* \`${activeUsersToday}\`
+• 🔍 *Searches Executed Today:* \`${todaySearches}\`
 • 📈 *Total Lifetime Searches:* \`${allTimeSearchesCount}\`
-• 🔑 *Active Redeem Vouchers:* \`${activeCodes}\`
-• 📢 *Official Channel:* \`${CHANNEL_USERNAME}\`
+• 💎 *VIP Premium Subscribers:* \`${premiumUsers}\`
+• 🔓 *Whitelisted DM Users:* \`${dmAllowedCount}\`
+• 🔑 *Active Redeem Keys:* \`${activeCodes}\`
 
-⚡ *Admin Commands:*
-• \`/users\` ➜ Check total registered users list & details
-• \`/premium_users\` ➜ View all VIP Premium subscribers
-• \`/remove_premium <userId>\` ➜ Instantly revoke premium & demote to Free
-• \`/add_premium <userId>\` ➜ Manually grant VIP access to user
-• \`/bot on\` / \`/bot off\` ➜ Toggle bot power
-• \`/gen <days>\` ➜ Generate single-use key
-• \`/dropcode <days>\` ➜ Broadcast code drop to all users
-• \`/broadcast <msg>\` ➜ Global announcement
+⚡ *Admin Quick Commands:*
+• \`/user <userId>\` ➜ Dossier, full lookups & quick action buttons
+• \`/users\` ➜ Interactive users list with today's search count
+• \`/allow_dm <id>\` / \`/revoke_dm <id>\` ➜ Manage DM access
+• \`/reset_user <id>\` ➜ Reset today's searches to 0
+• \`/add_searches <id> <N>\` ➜ Add +N bonus searches
+• \`/export_users\` ➜ Download complete .txt report
+• \`/set_delay <sec>\` ➜ Set group auto-delete delay
+• \`/set_limit <num>\` ➜ Set free daily limit
+• \`/dropcode <days>\` ➜ Broadcast single-use voucher
+• \`/broadcast <msg>\` ➜ Send global announcement
 
-👇 *Tap an action button below to execute:*`;
+👇 *Tap an option below to manage:*`;
 }
 
 function getMainInlineKeyboard() {
@@ -1593,6 +1831,15 @@ async function handleTelegramCallbackQuery(cq: any) {
   const chatType = cq.message?.chat?.type || (Number(chatId) < 0 ? 'supergroup' : 'private');
   const isPrivate = chatType === 'private' || Number(chatId) > 0;
   const user = getUser(userId);
+  if (cq.from?.username && user.username !== cq.from.username) {
+    user.username = cq.from.username;
+    persistUser(user).catch(() => {});
+  }
+  if (cq.from?.first_name && user.firstName !== cq.from.first_name) {
+    user.firstName = cq.from.first_name;
+    persistUser(user).catch(() => {});
+  }
+  user.lastActive = new Date().toISOString();
   const canUseDm = user.role === 'admin' || user.allowDm === true || String(userId) === String(ADMIN_USER_ID);
 
   if (isPrivate && !canUseDm && data !== "verify_membership" && data !== "check_join") {
@@ -1797,23 +2044,299 @@ Tap any service button directly, or send slash commands:
       return;
     }
 
-    if (data === "admin_list_users") {
+    // ── ADMIN SUB-MENUS NAVIGATION ──
+    if (data === "admin_menu_users") {
+      await answerTelegramCallbackQuery(cqId, "Opening Users Manager");
+      const usersText = `👥 *USERS & ACTIVITY INTELLIGENCE MANAGER*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Total Registered: \`${usersStore.size}\`
+Choose an action below to view user telemetry, inspect individual search counts, grant/revoke VIP, or export a detailed report:`;
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, usersText, getAdminUsersMenuKeyboard());
+      } else {
+        await sendTelegramMessage(chatId, usersText, getAdminUsersMenuKeyboard());
+      }
+      return;
+    }
+
+    if (data === "admin_menu_dm") {
+      await answerTelegramCallbackQuery(cqId, "Opening DM Whitelist");
+      const dmCount = Array.from(usersStore.values()).filter(u => u.allowDm || u.role === 'admin').length;
+      const dmText = `💬 *DM ACCESS WHITELIST MANAGER*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Current Whitelisted DM Users: \`${dmCount}\`
+By default, users must run lookups in the official group.
+Whitelist trusted users or VIPs here to allow direct private messaging lookups!`;
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, dmText, getAdminDmMenuKeyboard());
+      } else {
+        await sendTelegramMessage(chatId, dmText, getAdminDmMenuKeyboard());
+      }
+      return;
+    }
+
+    if (data === "admin_menu_autodelete") {
+      await answerTelegramCallbackQuery(cqId, "Opening Auto-Delete Settings");
+      const curSec = AUTO_DELETE_DELAY_MS > 0 ? `${Math.round(AUTO_DELETE_DELAY_MS / 1000)}s` : 'Disabled';
+      const textMsg = `⏱️ *GROUP LOOKUP AUTO-DELETE TIMER*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Current Timer: *${curSec}*
+
+When users execute lookups in the group, the bot automatically wipes both the query message and the confidential lookup results after this delay to prevent chat clutter and protect privacy.
+
+Select a new delay:`;
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, textMsg, getAdminAutoDeleteKeyboard(AUTO_DELETE_DELAY_MS));
+      } else {
+        await sendTelegramMessage(chatId, textMsg, getAdminAutoDeleteKeyboard(AUTO_DELETE_DELAY_MS));
+      }
+      return;
+    }
+
+    if (data.startsWith("admin_set_delay_")) {
+      const sec = parseInt(data.replace("admin_set_delay_", ""), 10);
+      AUTO_DELETE_DELAY_MS = sec * 1000;
+      await answerTelegramCallbackQuery(cqId, `Auto-delete set to ${sec === 0 ? 'Disabled' : sec + 's'}!`, true);
+      const textMsg = `✅ *Auto-delete timer updated to ${sec === 0 ? 'OFF (Disabled)' : sec + ' seconds'}!*`;
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, textMsg, getAdminAutoDeleteKeyboard(AUTO_DELETE_DELAY_MS));
+      }
+      return;
+    }
+
+    if (data === "admin_menu_dailyquota") {
+      await answerTelegramCallbackQuery(cqId, "Opening Free Daily Quota");
+      const textMsg = `🔢 *FREE TIER DAILY SEARCH LIMIT*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Current Default Limit: *${FREE_DAILY_LIMIT} lookups / day*
+
+Select the default number of searches free users can perform every day:`;
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, textMsg, getAdminQuotaKeyboard(FREE_DAILY_LIMIT));
+      } else {
+        await sendTelegramMessage(chatId, textMsg, getAdminQuotaKeyboard(FREE_DAILY_LIMIT));
+      }
+      return;
+    }
+
+    if (data.startsWith("admin_set_quota_")) {
+      const quota = parseInt(data.replace("admin_set_quota_", ""), 10);
+      FREE_DAILY_LIMIT = quota;
+      await answerTelegramCallbackQuery(cqId, `Free limit set to ${quota}/day!`, true);
+      const textMsg = `✅ *Free tier daily limit updated to ${quota} searches / day!*`;
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, textMsg, getAdminQuotaKeyboard(FREE_DAILY_LIMIT));
+      }
+      return;
+    }
+
+    if (data === "admin_users_export") {
+      await answerTelegramCallbackQuery(cqId, "Generating user report file...");
+      await exportUsersToTelegram(chatId);
+      return;
+    }
+
+    if (data === "admin_users_active") {
+      await answerTelegramCallbackQuery(cqId, "Loading today's active users...");
+      const today = getTodayString();
+      const activeUsers = Array.from(usersStore.values())
+        .filter(u => u.lastSearchDate === today && (u.dailySearches || 0) > 0)
+        .sort((a, b) => (b.dailySearches || 0) - (a.dailySearches || 0));
+
+      if (activeUsers.length === 0) {
+        await sendTelegramMessage(chatId, `🔥 *TODAY'S ACTIVE USERS*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nNo searches executed today yet.\n(Daily counters reset at 12:00 AM UTC)`, getMainReplyKeyboard(user));
+        return;
+      }
+
+      let msgText = `🔥 *ACTIVE USERS TODAY (${activeUsers.length})*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      activeUsers.slice(0, 25).forEach((u, idx) => {
+        const handle = u.username ? `@${u.username}` : (u.firstName || 'User');
+        const roleIcon = u.role === 'admin' ? '👑' : u.role === 'premium' ? '💎' : '👤';
+        const limit = u.role === 'free' ? getUserDailyLimit(u) : '∞';
+        msgText += `${idx + 1}. ${roleIcon} *${handle}* (\`${u.userId}\`)\n   ⚡ Today: *${u.dailySearches}* / ${limit} lookups | Total: ${u.totalSearches}\n   👉 Inspect: \`/user ${u.userId}\`\n`;
+      });
+      if (activeUsers.length > 25) {
+        msgText += `\n*(Showing top 25 of ${activeUsers.length} active members today)*`;
+      }
+      await sendTelegramMessage(chatId, msgText, getMainReplyKeyboard(user));
+      return;
+    }
+
+    if (data === "admin_users_all" || data === "admin_list_users") {
       await answerTelegramCallbackQuery(cqId, "Loading registered users...");
+      const today = getTodayString();
       const allUsers = Array.from(usersStore.values());
       const total = allUsers.length;
       const prem = allUsers.filter(u => u.role === 'premium').length;
       const free = allUsers.filter(u => u.role === 'free').length;
 
-      let msgText = `👥 *REGISTERED USERS DIRECTORY*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 Total Users: \`${total}\` | 💎 VIP: \`${prem}\` | 🆓 Free: \`${free}\`\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-      const sample = allUsers.slice(-20).reverse();
+      let msgText = `👥 *ALL REGISTERED USERS DIRECTORY*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 Total: \`${total}\` | 💎 VIP: \`${prem}\` | 🆓 Free: \`${free}\`\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      const sample = allUsers.slice(-25).reverse();
       sample.forEach((u, idx) => {
+        const isToday = u.lastSearchDate === today;
+        const todayUsed = isToday ? (u.dailySearches || 0) : 0;
         const roleIcon = u.role === 'admin' ? '👑' : u.role === 'premium' ? '💎' : '👤';
-        msgText += `${idx + 1}. ${roleIcon} ID: \`${u.userId}\` [${u.role.toUpperCase()}]\n   Searches: ${u.totalSearches} (Today: ${u.dailySearches}) | Invites: ${u.referralCount || 0}\n`;
+        const handle = u.username ? `@${u.username}` : (u.firstName || 'User');
+        const dmIcon = (u.allowDm || u.role === 'admin') ? '🔓 DM' : '🔒 Group';
+        msgText += `${idx + 1}. ${roleIcon} *${handle}* (\`${u.userId}\`)\n   🔍 Today: *${todayUsed}* | Lifetime: ${u.totalSearches || 0} | ${dmIcon}\n   👉 Inspect: \`/user ${u.userId}\`\n`;
       });
-      if (total > 20) {
-        msgText += `\n*(Showing latest 20 of ${total} users)*`;
+      if (total > 25) {
+        msgText += `\n💡 *Tip:* Send \`/export_users\` to download all ${total} users as a file!\nOr send \`/user <userId>\` to inspect and manage any specific user.`;
       }
       await sendTelegramMessage(chatId, msgText, getMainReplyKeyboard(user));
+      return;
+    }
+
+    if (data === "admin_dm_list") {
+      await answerTelegramCallbackQuery(cqId, "Loading DM allowed users...");
+      const dmUsers = Array.from(usersStore.values()).filter(u => u.allowDm || u.role === 'admin');
+      if (dmUsers.length === 0) {
+        await sendTelegramMessage(chatId, `💬 *DM ACCESS USERS*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nNo users currently have private DM access.\n\n👉 Whitelist someone with: \`/allow_dm <userId>\``, getMainReplyKeyboard(user));
+        return;
+      }
+      let msgText = `💬 *WHITELISTED PRIVATE DM USERS (${dmUsers.length})*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      dmUsers.forEach((u, idx) => {
+        const handle = u.username ? `@${u.username}` : (u.firstName || 'User');
+        const roleIcon = u.role === 'admin' ? '👑' : u.role === 'premium' ? '💎' : '👤';
+        msgText += `${idx + 1}. ${roleIcon} *${handle}* (\`${u.userId}\`)\n   Revoke: \`/revoke_dm ${u.userId}\` | Inspect: \`/user ${u.userId}\`\n`;
+      });
+      await sendTelegramMessage(chatId, msgText, getMainReplyKeyboard(user));
+      return;
+    }
+
+    if (data === "admin_inspect_prompt") {
+      user.pendingAction = 'admin_inspect_user';
+      await answerTelegramCallbackQuery(cqId, "Send User ID to inspect");
+      await sendTelegramMessage(chatId, `🔍 *INSPECT USER DOSSIER*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nPlease type & send the *Telegram User ID* you want to view:\n\n💡 *Or use command directly:* \`/user <userId>\`\n\n*(Send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
+
+    if (data === "admin_allow_dm_prompt") {
+      user.pendingAction = 'admin_allow_dm';
+      await answerTelegramCallbackQuery(cqId, "Send User ID to allow DM");
+      await sendTelegramMessage(chatId, `🟢 *ALLOW PRIVATE DM ACCESS*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nPlease type & send the *Telegram User ID* to whitelist for DM:\n\n💡 *Or use command directly:* \`/allow_dm <userId>\`\n\n*(Send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
+
+    if (data === "admin_revoke_dm_prompt") {
+      user.pendingAction = 'admin_revoke_dm';
+      await answerTelegramCallbackQuery(cqId, "Send User ID to revoke DM");
+      await sendTelegramMessage(chatId, `🔴 *REVOKE PRIVATE DM ACCESS*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nPlease type & send the *Telegram User ID* to revoke DM access from:\n\n💡 *Or use command directly:* \`/revoke_dm <userId>\`\n\n*(Send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
+
+    if (data === "admin_reset_all_searches") {
+      const today = getTodayString();
+      let resetCount = 0;
+      for (const u of usersStore.values()) {
+        u.dailySearches = 0;
+        u.dailyButtonUsage = {};
+        u.lastSearchDate = today;
+        resetCount += 1;
+      }
+      await answerTelegramCallbackQuery(cqId, `Reset daily counters for all ${resetCount} users!`, true);
+      await sendTelegramMessage(chatId, `✅ *ALL USERS DAILY SEARCHES RESET!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSuccessfully cleared daily lookup counters for all *${resetCount} registered users* to 0.`, getMainReplyKeyboard(user));
+      return;
+    }
+
+    // ── DOSSIER INTERACTIVE ACTION BUTTONS ──
+    if (data.startsWith("admin_act_allowdm_")) {
+      const targetId = data.replace("admin_act_allowdm_", "");
+      const targetUser = getUser(targetId);
+      targetUser.allowDm = true;
+      await persistUser(targetUser);
+      await answerTelegramCallbackQuery(cqId, `Allowed DM for ${targetId}!`, true);
+      const card = getUserDossierCard(targetUser);
+      const kb = getUserDossierKeyboard(targetUser.userId, true, targetUser.role);
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, card, kb);
+      }
+      try {
+        await sendTelegramMessage(targetId, `🔓 *DM ACCESS GRANTED!*\nAdmin has unlocked direct private messaging for your account.\nYou can now run OSINT lookups in this bot's private chat! 🚀`);
+      } catch {}
+      return;
+    }
+
+    if (data.startsWith("admin_act_revokedm_")) {
+      const targetId = data.replace("admin_act_revokedm_", "");
+      const targetUser = getUser(targetId);
+      targetUser.allowDm = false;
+      await persistUser(targetUser);
+      await answerTelegramCallbackQuery(cqId, `Revoked DM for ${targetId}!`, true);
+      const card = getUserDossierCard(targetUser);
+      const kb = getUserDossierKeyboard(targetUser.userId, false, targetUser.role);
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, card, kb);
+      }
+      return;
+    }
+
+    if (data.startsWith("admin_act_vip_")) {
+      const targetId = data.replace("admin_act_vip_", "");
+      const targetUser = getUser(targetId);
+      targetUser.role = 'premium';
+      await persistUser(targetUser);
+      await answerTelegramCallbackQuery(cqId, `Promoted ${targetId} to VIP Premium!`, true);
+      const card = getUserDossierCard(targetUser);
+      const kb = getUserDossierKeyboard(targetUser.userId, Boolean(targetUser.allowDm), 'premium');
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, card, kb);
+      }
+      try {
+        await sendTelegramMessage(targetId, `🎉 *VIP PREMIUM ACTIVATED!*\nAdmin has upgraded your account to VIP Premium with unlimited searches! 🚀`);
+      } catch {}
+      return;
+    }
+
+    if (data.startsWith("admin_act_demote_")) {
+      const targetId = data.replace("admin_act_demote_", "");
+      const targetUser = getUser(targetId);
+      targetUser.role = 'free';
+      await persistUser(targetUser);
+      await answerTelegramCallbackQuery(cqId, `Demoted ${targetId} to Free!`, true);
+      const card = getUserDossierCard(targetUser);
+      const kb = getUserDossierKeyboard(targetUser.userId, Boolean(targetUser.allowDm), 'free');
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, card, kb);
+      }
+      return;
+    }
+
+    if (data.startsWith("admin_act_reset_")) {
+      const targetId = data.replace("admin_act_reset_", "");
+      const targetUser = getUser(targetId);
+      targetUser.dailySearches = 0;
+      targetUser.dailyButtonUsage = {};
+      targetUser.lastSearchDate = getTodayString();
+      await persistUser(targetUser);
+      await answerTelegramCallbackQuery(cqId, `Reset searches for ${targetId}!`, true);
+      const card = getUserDossierCard(targetUser);
+      const kb = getUserDossierKeyboard(targetUser.userId, Boolean(targetUser.allowDm), targetUser.role);
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, card, kb);
+      }
+      return;
+    }
+
+    if (data.startsWith("admin_act_add10_")) {
+      const targetId = data.replace("admin_act_add10_", "");
+      const targetUser = getUser(targetId);
+      targetUser.dailySearches = Math.max(0, (targetUser.dailySearches || 0) - 10);
+      await persistUser(targetUser);
+      await answerTelegramCallbackQuery(cqId, `Added +10 search quota for ${targetId}!`, true);
+      const card = getUserDossierCard(targetUser);
+      const kb = getUserDossierKeyboard(targetUser.userId, Boolean(targetUser.allowDm), targetUser.role);
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, card, kb);
+      }
+      return;
+    }
+
+    if (data.startsWith("admin_act_msg_")) {
+      const targetId = data.replace("admin_act_msg_", "");
+      user.pendingAction = `admin_msg_${targetId}`;
+      await answerTelegramCallbackQuery(cqId, `Type message for ${targetId}`);
+      await sendTelegramMessage(chatId, `✉️ *SEND MESSAGE TO USER:* \`${targetId}\`\n━━━━━━━━━━━━━━━━━━━━━━━━━\nPlease type the message you want to deliver to this user directly via bot:\n\n*(Send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
       return;
     }
 
@@ -1826,7 +2349,8 @@ Tap any service button directly, or send slash commands:
       }
       let msgText = `💎 *VIP PREMIUM SUBSCRIBERS (${premUsers.length})*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
       premUsers.forEach((u, idx) => {
-        msgText += `${idx + 1}. 💎 ID: \`${u.userId}\`\n   Total Searches: ${u.totalSearches} | Invites: ${u.referralCount || 0}\n   Remove: \`/remove_premium ${u.userId}\`\n`;
+        const handle = u.username ? `@${u.username}` : (u.firstName || 'User');
+        msgText += `${idx + 1}. 💎 *${handle}* (\`${u.userId}\`)\n   Lifetime: ${u.totalSearches || 0} | Today: ${getUserTodaySearches(u)}\n   👉 Remove: \`/remove_premium ${u.userId}\` | Inspect: \`/user ${u.userId}\`\n`;
       });
       await sendTelegramMessage(chatId, msgText, getMainReplyKeyboard(user));
       return;
@@ -2121,6 +2645,15 @@ async function handleTelegramUpdate(msg: any) {
   const isGroup = chatType === 'group' || chatType === 'supergroup' || Number(chatId) < 0;
 
   const user = getUser(userId);
+  if (msg.from?.username && user.username !== msg.from.username) {
+    user.username = msg.from.username;
+    persistUser(user).catch(() => {});
+  }
+  if (msg.from?.first_name && user.firstName !== msg.from.first_name) {
+    user.firstName = msg.from.first_name;
+    persistUser(user).catch(() => {});
+  }
+  user.lastActive = new Date().toISOString();
   const remaining = getUserRemaining(user);
   const dailyLimit = getUserDailyLimit(user);
 
@@ -2435,6 +2968,83 @@ Naya button Telegram keyboard aur website dono par automatically live ho chuka h
     return;
   }
 
+  // ── TELEGRAM ADMIN USER INSPECT PENDING ACTION ──
+  if (user.pendingAction === 'admin_inspect_user' && isAdmin) {
+    user.pendingAction = undefined;
+    if (text === "❌ Cancel" || text === "/cancel") {
+      await sendTelegramMessage(chatId, "🔙 Operation cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+    const targetId = text.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    const targetUser = usersStore.get(targetId);
+    if (!targetUser) {
+      await sendTelegramMessage(chatId, `❌ User ID \`${targetId}\` not found in bot database.\nMake sure the user has started the bot at least once.`, getMainReplyKeyboard(user));
+      return;
+    }
+    const card = getUserDossierCard(targetUser);
+    const kb = getUserDossierKeyboard(targetUser.userId, Boolean(targetUser.allowDm), targetUser.role);
+    await sendTelegramMessage(chatId, card, kb);
+    return;
+  }
+
+  // ── TELEGRAM ADMIN ALLOW DM PENDING ACTION ──
+  if (user.pendingAction === 'admin_allow_dm' && isAdmin) {
+    user.pendingAction = undefined;
+    if (text === "❌ Cancel" || text === "/cancel") {
+      await sendTelegramMessage(chatId, "🔙 Operation cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+    const targetId = text.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    const targetUser = getUser(targetId);
+    targetUser.allowDm = true;
+    await persistUser(targetUser);
+    await sendTelegramMessage(chatId, `✅ *PRIVATE DM ACCESS UNLOCKED!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+👤 User ID: \`${targetId}\`
+🔓 Status: Whitelisted for Private DM
+User can now query OSINT commands in private bot DM without group restriction.`, getMainReplyKeyboard(user));
+    try {
+      await sendTelegramMessage(targetId, `🔓 *DM ACCESS GRANTED!*\nAdmin has unlocked direct private messaging for your account.\nYou can now run OSINT lookups in this bot's private chat! 🚀`);
+    } catch {}
+    return;
+  }
+
+  // ── TELEGRAM ADMIN REVOKE DM PENDING ACTION ──
+  if (user.pendingAction === 'admin_revoke_dm' && isAdmin) {
+    user.pendingAction = undefined;
+    if (text === "❌ Cancel" || text === "/cancel") {
+      await sendTelegramMessage(chatId, "🔙 Operation cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+    const targetId = text.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    const targetUser = getUser(targetId);
+    targetUser.allowDm = false;
+    await persistUser(targetUser);
+    await sendTelegramMessage(chatId, `🔒 *PRIVATE DM ACCESS REVOKED!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+👤 User ID: \`${targetId}\`
+🔒 Status: Group Only
+User must now run lookups strictly in the official group.`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  // ── TELEGRAM ADMIN DIRECT MESSAGE TO USER PENDING ACTION ──
+  if (user.pendingAction?.startsWith('admin_msg_') && isAdmin) {
+    const targetId = user.pendingAction.replace('admin_msg_', '');
+    user.pendingAction = undefined;
+    if (text === "❌ Cancel" || text === "/cancel") {
+      await sendTelegramMessage(chatId, "🔙 Message sending cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+    try {
+      await sendTelegramMessage(targetId, `📩 *DIRECT MESSAGE FROM ADMINISTRATOR:*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${text}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— ${msg.from?.first_name || 'Admin'}`);
+      await sendTelegramMessage(chatId, `✅ Message delivered directly to user \`${targetId}\`!`, getMainReplyKeyboard(user));
+    } catch (e: any) {
+      await sendTelegramMessage(chatId, `❌ Failed to deliver message to user \`${targetId}\`: ${e.message}`, getMainReplyKeyboard(user));
+    }
+    return;
+  }
+
   // ── ADMIN TELEGRAM COMMANDS & PANEL ──
   if (isAdmin && (text === "👑 Admin Control Panel" || text === "⚙️ Admin Panel" || text === "/admin")) {
     user.pendingAction = undefined;
@@ -2456,20 +3066,136 @@ Naya button Telegram keyboard aur website dono par automatically live ho chuka h
     return;
   }
 
+  if (isAdmin && (text.startsWith("/user ") || text.startsWith("/inspect "))) {
+    const parts = text.split(/\s+/);
+    const targetId = parts[1]?.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    if (!targetId) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/user <userId>\`\nExample: \`/user 6516740398\``, getMainReplyKeyboard(user));
+      return;
+    }
+    const targetUser = usersStore.get(targetId);
+    if (!targetUser) {
+      await sendTelegramMessage(chatId, `❌ User \`${targetId}\` not found in bot database.`, getMainReplyKeyboard(user));
+      return;
+    }
+    const card = getUserDossierCard(targetUser);
+    const kb = getUserDossierKeyboard(targetUser.userId, Boolean(targetUser.allowDm), targetUser.role);
+    await sendTelegramMessage(chatId, card, kb);
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/allow_dm") || text.startsWith("/allowdm"))) {
+    const parts = text.split(/\s+/);
+    const targetId = parts[1]?.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    if (!targetId) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/allow_dm <userId>\`\nExample: \`/allow_dm 6516740398\``, getMainReplyKeyboard(user));
+      return;
+    }
+    const targetUser = getUser(targetId);
+    targetUser.allowDm = true;
+    await persistUser(targetUser);
+    await sendTelegramMessage(chatId, `✅ *DM ACCESS ALLOWED*\nUser \`${targetId}\` has been whitelisted to use OSINT lookups in private bot DM.`, getMainReplyKeyboard(user));
+    try {
+      await sendTelegramMessage(targetId, `🔓 *DM ACCESS GRANTED!*\nAdmin has unlocked direct private messaging for your account.\nYou can now run OSINT lookups in this bot's private chat! 🚀`);
+    } catch {}
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/revoke_dm") || text.startsWith("/revokedm"))) {
+    const parts = text.split(/\s+/);
+    const targetId = parts[1]?.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    if (!targetId) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/revoke_dm <userId>\`\nExample: \`/revoke_dm 6516740398\``, getMainReplyKeyboard(user));
+      return;
+    }
+    const targetUser = getUser(targetId);
+    targetUser.allowDm = false;
+    await persistUser(targetUser);
+    await sendTelegramMessage(chatId, `🔒 *DM ACCESS REVOKED*\nUser \`${targetId}\` can now only use the bot in official group.`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/reset_user") || text.startsWith("/resetsearches"))) {
+    const parts = text.split(/\s+/);
+    const targetId = parts[1]?.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    if (!targetId) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/reset_user <userId>\``, getMainReplyKeyboard(user));
+      return;
+    }
+    const targetUser = getUser(targetId);
+    targetUser.dailySearches = 0;
+    targetUser.dailyButtonUsage = {};
+    targetUser.lastSearchDate = getTodayString();
+    await persistUser(targetUser);
+    await sendTelegramMessage(chatId, `✅ *User \`${targetId}\` daily searches reset to 0!*`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/add_searches") || text.startsWith("/addsearches"))) {
+    const parts = text.split(/\s+/);
+    const targetId = parts[1]?.trim().replace(/[^0-9a-zA-Z_]/g, '');
+    const amount = parseInt(parts[2], 10) || 10;
+    if (!targetId) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/add_searches <userId> <amount>\`\nExample: \`/add_searches 6516740398 25\``, getMainReplyKeyboard(user));
+      return;
+    }
+    const targetUser = getUser(targetId);
+    targetUser.dailySearches = Math.max(0, (targetUser.dailySearches || 0) - amount);
+    await persistUser(targetUser);
+    await sendTelegramMessage(chatId, `✅ *Added +${amount} searches for User \`${targetId}\`!*`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/set_delay") || text.startsWith("/setdelay"))) {
+    const parts = text.split(/\s+/);
+    const sec = parseInt(parts[1], 10);
+    if (isNaN(sec)) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/set_delay <seconds>\`\nExample: \`/set_delay 40\` (or \`0\` to disable auto-delete)`, getMainReplyKeyboard(user));
+      return;
+    }
+    AUTO_DELETE_DELAY_MS = sec * 1000;
+    await sendTelegramMessage(chatId, `⏱️ *Auto-delete delay updated to ${sec === 0 ? 'Disabled' : sec + ' seconds'}!*`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/set_limit") || text.startsWith("/setlimit"))) {
+    const parts = text.split(/\s+/);
+    const limit = parseInt(parts[1], 10);
+    if (isNaN(limit) || limit < 1) {
+      await sendTelegramMessage(chatId, `⚠️ *Usage:* \`/set_limit <daily_number>\`\nExample: \`/set_limit 30\``, getMainReplyKeyboard(user));
+      return;
+    }
+    FREE_DAILY_LIMIT = limit;
+    await sendTelegramMessage(chatId, `⚡ *Free tier daily search limit updated to ${limit} lookups / day!*`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text === "/export_users" || text === "/export")) {
+    await sendTelegramMessage(chatId, `⏳ Generating complete users intelligence file...`);
+    await exportUsersToTelegram(chatId);
+    return;
+  }
+
   if (isAdmin && (text === "/users" || text === "/all_users")) {
+    const today = getTodayString();
     const allUsers = Array.from(usersStore.values());
     const total = allUsers.length;
     const prem = allUsers.filter(u => u.role === 'premium').length;
     const free = allUsers.filter(u => u.role === 'free').length;
 
-    let msgText = `👥 *REGISTERED USERS DIRECTORY*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 Total Users: \`${total}\` | 💎 VIP: \`${prem}\` | 🆓 Free: \`${free}\`\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    let msgText = `👥 *ALL REGISTERED USERS DIRECTORY*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 Total: \`${total}\` | 💎 VIP: \`${prem}\` | 🆓 Free: \`${free}\`\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     const sample = allUsers.slice(-25).reverse();
     sample.forEach((u, idx) => {
+      const isToday = u.lastSearchDate === today;
+      const todayUsed = isToday ? (u.dailySearches || 0) : 0;
       const roleIcon = u.role === 'admin' ? '👑' : u.role === 'premium' ? '💎' : '👤';
-      msgText += `${idx + 1}. ${roleIcon} ID: \`${u.userId}\` [${u.role.toUpperCase()}]\n   Searches: ${u.totalSearches} (Today: ${u.dailySearches}) | Invites: ${u.referralCount || 0}\n`;
+      const handle = u.username ? `@${u.username}` : (u.firstName || 'User');
+      const limit = u.role === 'free' ? getUserDailyLimit(u) : '∞';
+      const dm = (u.allowDm || u.role === 'admin') ? '🔓 DM' : '🔒 Group';
+      msgText += `${idx + 1}. ${roleIcon} *${handle}* (\`${u.userId}\`)\n   🔍 Today: *${todayUsed}* / ${limit} | Total: ${u.totalSearches || 0} | ${dm}\n   👉 Inspect: \`/user ${u.userId}\`\n`;
     });
     if (total > 25) {
-      msgText += `\n*(Showing latest 25 of ${total} users)*`;
+      msgText += `\n💡 *Tip:* Send \`/export_users\` for full .txt report of all ${total} users!`;
     }
     await sendTelegramMessage(chatId, msgText, getMainReplyKeyboard(user));
     return;
@@ -3844,19 +4570,107 @@ async function startServer() {
   // ── USER MANAGEMENT & DM ACCESS ADMIN ENDPOINTS ──
   // GET /api/admin/users - return list of all users and permissions
   app.get('/api/admin/users', (req, res) => {
+    const today = getTodayString();
     const users = Array.from(usersStore.values()).map(u => ({
       userId: u.userId,
+      username: u.username || '',
+      firstName: u.firstName || '',
       role: u.role,
-      dailySearches: u.dailySearches,
+      dailySearches: getUserTodaySearches(u),
       dailyLimit: getUserDailyLimit(u),
-      totalSearches: u.totalSearches,
+      remaining: getUserRemaining(u),
+      totalSearches: u.totalSearches || 0,
       channelVerified: u.channelVerified,
       referralCount: u.referralCount || 0,
       referralBonusDaily: u.referralBonusDaily || 0,
       allowDm: Boolean(u.allowDm || u.role === 'admin'),
-      dailyButtonUsage: u.dailyButtonUsage || {},
+      lastActive: u.lastActive || '',
+      createdAt: u.createdAt || '',
+      dailyButtonUsage: (u.lastSearchDate === today && u.dailyButtonUsage) ? u.dailyButtonUsage : {},
     }));
-    res.json({ success: true, users });
+    res.json({ success: true, users, total: users.length });
+  });
+
+  // POST /api/admin/users/reset-searches - reset today's search counter
+  app.post('/api/admin/users/reset-searches', async (req, res) => {
+    const { userId } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required' });
+    }
+    const user = getUser(userId);
+    user.dailySearches = 0;
+    user.dailyButtonUsage = {};
+    user.lastSearchDate = getTodayString();
+    await persistUser(user);
+    res.json({
+      success: true,
+      message: `Daily searches for user ${userId} reset to 0.`
+    });
+  });
+
+  // POST /api/admin/users/add-bonus - add bonus searches
+  app.post('/api/admin/users/add-bonus', async (req, res) => {
+    const { userId, amount = 10 } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required' });
+    }
+    const user = getUser(userId);
+    user.dailySearches = Math.max(0, (user.dailySearches || 0) - Number(amount));
+    await persistUser(user);
+    res.json({
+      success: true,
+      message: `Added +${amount} searches to user ${userId}. New remaining today: ${getUserRemaining(user)}`
+    });
+  });
+
+  // POST /api/admin/users/delete - remove user record
+  app.post('/api/admin/users/delete', async (req, res) => {
+    const { userId } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required' });
+    }
+    usersStore.delete(String(userId));
+    if (supabase) {
+      try {
+        await supabase.from('bot_users').delete().eq('user_id', String(userId));
+      } catch (e: any) {
+        console.warn(`[Supabase] Could not delete user ${userId}:`, e.message);
+      }
+    }
+    res.json({ success: true, message: `User ${userId} deleted.` });
+  });
+
+  // GET /api/admin/users/export-text - download plain text full dump
+  app.get('/api/admin/users/export-text', (req, res) => {
+    const today = getTodayString();
+    const allUsers = Array.from(usersStore.values());
+    let dump = `═══════════════════════════════════════════════════════════════\n`;
+    dump += `           ${BOT_NAME} - REGISTERED USERS AUDIT DUMP\n`;
+    dump += `═══════════════════════════════════════════════════════════════\n`;
+    dump += `Generated: ${new Date().toISOString()}\n`;
+    dump += `Total Users Registered: ${allUsers.length}\n`;
+    dump += `Today's Date: ${today}\n\n`;
+
+    allUsers.forEach((u, i) => {
+      const isToday = u.lastSearchDate === today;
+      const todayUsed = isToday ? (u.dailySearches || 0) : 0;
+      const limit = u.role === 'free' ? getUserDailyLimit(u) : 'UNLIMITED';
+      dump += `[#${i + 1}] USER ID: ${u.userId}\n`;
+      dump += `  Handle: ${u.username ? '@' + u.username : 'N/A'}\n`;
+      dump += `  Name: ${u.firstName || 'N/A'}\n`;
+      dump += `  Role: ${u.role.toUpperCase()}\n`;
+      dump += `  Today Searches: ${todayUsed} / ${limit}\n`;
+      dump += `  Total Searches: ${u.totalSearches || 0}\n`;
+      dump += `  DM Allowed: ${Boolean(u.allowDm || u.role === 'admin') ? 'YES' : 'NO'}\n`;
+      dump += `  Invited Friends: ${u.referralCount || 0}\n`;
+      dump += `  Last Active: ${u.lastActive || 'N/A'}\n`;
+      dump += `  Registered: ${u.createdAt || 'N/A'}\n`;
+      dump += `───────────────────────────────────────────────────────────────\n`;
+    });
+
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Disposition', `attachment; filename="bot_users_${today}.txt"`);
+    res.send(dump);
   });
 
   // POST /api/admin/users/allow-dm - toggle user DM access

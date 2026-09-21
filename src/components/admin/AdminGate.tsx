@@ -12,7 +12,11 @@ import {
   Users,
   Eye,
   EyeOff,
-  Cpu
+  Cpu,
+  Fingerprint,
+  Sparkles,
+  Server,
+  Activity
 } from 'lucide-react';
 import type { StatsData, BotConfig } from '../../types';
 
@@ -27,25 +31,31 @@ export const AdminGate: React.FC<AdminGateProps> = ({ onUnlock, stats, config })
   const [showPasscode, setShowPasscode] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isAuthorizing, setIsAuthorizing] = useState(false);
+  const [authStep, setAuthStep] = useState<'idle' | 'scanning' | 'granted'>('idle');
 
   const handleAuthorize = (codeToTest?: string) => {
     const input = (codeToTest !== undefined ? codeToTest : passcode).trim();
     setIsAuthorizing(true);
+    setAuthStep('scanning');
     setErrorMsg(null);
 
     setTimeout(() => {
-      // Allow master owner clearances or standard administrative passcodes
+      // If manually typed and empty, prompt user
       if (!input && codeToTest === undefined) {
-        setErrorMsg('Please enter master administrative passcode or click Instant Unlock.');
+        setErrorMsg('Please enter master administrative passcode or click Instant Access.');
         setIsAuthorizing(false);
+        setAuthStep('idle');
         return;
       }
 
       // Successful authorization
+      setAuthStep('granted');
       sessionStorage.setItem('iramx_admin_auth', 'true');
-      setIsAuthorizing(false);
-      onUnlock();
-    }, 400);
+      setTimeout(() => {
+        setIsAuthorizing(false);
+        onUnlock();
+      }, 300);
+    }, 450);
   };
 
   const handleInstantUnlock = () => {
@@ -53,122 +63,144 @@ export const AdminGate: React.FC<AdminGateProps> = ({ onUnlock, stats, config })
   };
 
   return (
-    <div className="w-full max-w-4xl mx-auto my-6 px-4">
+    <div className="w-full max-w-5xl mx-auto my-8 px-4">
       {/* Outer Cyber Security Container */}
-      <div className="relative rounded-3xl bg-slate-900/90 border border-amber-500/30 shadow-2xl backdrop-blur-xl overflow-hidden">
-        {/* Glow accent */}
-        <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
-        <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none -ml-20 -mb-20" />
+      <div className="relative rounded-3xl bg-slate-900/95 border border-amber-500/30 shadow-2xl backdrop-blur-2xl overflow-hidden">
+        {/* Glow ambient lights */}
+        <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none -mr-24 -mt-24" />
+        <div className="absolute bottom-0 left-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none -ml-24 -mb-24" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
 
         {/* Top Header Strip */}
-        <div className="border-b border-slate-800/80 bg-slate-950/60 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <span className="relative flex h-2.5 w-2.5">
+        <div className="border-b border-slate-800/80 bg-slate-950/80 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="relative flex h-3 w-3">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
             </span>
-            <span className="font-mono text-xs font-semibold text-slate-300 tracking-wider">
-              GATEWAY // PROTOCOL 7.3
-            </span>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              RESTRICTED ROOT
-            </span>
+            <div className="flex items-center gap-2 font-mono text-xs">
+              <span className="font-bold text-white tracking-widest uppercase">
+                {config.botName || 'IRAM-X'}
+              </span>
+              <span className="text-slate-500">//</span>
+              <span className="text-emerald-400 font-semibold">SECURITY CLEARANCE GATE</span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-3 text-xs text-slate-400 font-mono">
-            <span>DAEMON: <strong className="text-emerald-400">ONLINE</strong></span>
-            <span>•</span>
-            <span>PORT: <strong className="text-indigo-300">3000</strong></span>
+          <div className="flex items-center gap-3 text-xs font-mono">
+            <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center gap-1.5">
+              <Activity className="w-3 h-3" />
+              <span>DAEMON ONLINE</span>
+            </span>
+            <span className="px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+              PORT 3000
+            </span>
           </div>
         </div>
 
-        {/* Content Body */}
+        {/* Main Entrance Content */}
         <div className="p-6 sm:p-10 relative z-10">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-            {/* Left Column: Title & Key Telemetry */}
-            <div className="lg:col-span-7 space-y-5">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-semibold">
-                <Shield className="w-4 h-4" />
-                <span>OSINT Command & Control Portal</span>
-              </div>
-
-              <div>
-                <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-                  Master Admin Operations
-                </h2>
-                <p className="text-sm text-slate-300 mt-2 leading-relaxed">
-                  Direct management console for {config.botName} Bot. Manage custom APIs, user daily limits, group auto-destruct parameters, and private DM whitelist.
+            {/* Left Column: Command & Telemetry Center */}
+            <div className="lg:col-span-7 space-y-6">
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-semibold">
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Admin Command & Intelligence Portal</span>
+                </div>
+                <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+                  Master Control Gateway
+                </h1>
+                <p className="text-sm text-slate-300 leading-relaxed max-w-xl">
+                  Centralized command console for managing dynamic buttons, daily search limits, user intelligence dossiers, private DM access, and auto-destruct timers.
                 </p>
               </div>
 
-              {/* Security Telemetry Badges */}
-              <div className="grid grid-cols-2 sm:grid-cols-2 gap-3 pt-2">
-                <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800">
-                  <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
-                    <Radio className="w-3.5 h-3.5 text-sky-400" />
-                    <span>Official Group</span>
+              {/* Real-time System Metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-2 gap-3 pt-1">
+                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/90 shadow-inner hover:border-slate-700 transition">
+                  <div className="flex items-center gap-2 text-xs text-slate-400 mb-1.5">
+                    <Radio className="w-4 h-4 text-sky-400" />
+                    <span className="font-medium">Official Community</span>
                   </div>
-                  <div className="text-sm font-semibold text-white font-mono truncate">
-                    @lookupXchat
+                  <div className="text-sm font-bold text-white font-mono">
+                    @{config.supportGroup || 'lookupXchat'}
                   </div>
-                  <div className="text-[10px] text-emerald-400 mt-0.5">
-                    ● Isolated to -1002164265666
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800">
-                  <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
-                    <Zap className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Auto-Delete</span>
-                  </div>
-                  <div className="text-sm font-semibold text-white font-mono">
-                    40s Destruct
-                  </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5">
-                    Queries & Result files
+                  <div className="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block"></span>
+                    Verified Operations Hub
                   </div>
                 </div>
 
-                <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800">
-                  <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
-                    <Users className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>DM Whitelist</span>
+                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/90 shadow-inner hover:border-slate-700 transition">
+                  <div className="flex items-center gap-2 text-xs text-slate-400 mb-1.5">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    <span className="font-medium">Auto-Destruct Policy</span>
                   </div>
-                  <div className="text-sm font-semibold text-white font-mono">
-                    Restricted Access
+                  <div className="text-sm font-bold text-white font-mono">
+                    40s Ephemeral
                   </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5">
-                    Admin + Authorized users
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    Auto-purges query & results
                   </div>
                 </div>
 
-                <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800">
-                  <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
-                    <Cpu className="w-3.5 h-3.5 text-purple-400" />
-                    <span>Total Lookups</span>
+                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/90 shadow-inner hover:border-slate-700 transition">
+                  <div className="flex items-center gap-2 text-xs text-slate-400 mb-1.5">
+                    <Users className="w-4 h-4 text-indigo-400" />
+                    <span className="font-medium">Registered Agents</span>
                   </div>
-                  <div className="text-sm font-semibold text-white font-mono">
-                    {stats.todaySearches} Today
+                  <div className="text-sm font-bold text-white font-mono">
+                    {stats.totalUsers || 0} Registered
                   </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5">
-                    {stats.totalUsers} registered users
+                  <div className="text-[11px] text-indigo-300 mt-1">
+                    {stats.premiumUsers || 0} VIP Members
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/90 shadow-inner hover:border-slate-700 transition">
+                  <div className="flex items-center gap-2 text-xs text-slate-400 mb-1.5">
+                    <Cpu className="w-4 h-4 text-emerald-400" />
+                    <span className="font-medium">Today's Lookups</span>
+                  </div>
+                  <div className="text-sm font-bold text-emerald-400 font-mono">
+                    {stats.todaySearches || 0} Executed
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    {stats.allTimeSearches || 0} all-time queries
                   </div>
                 </div>
               </div>
+
+              {/* Developer Attribution Tag */}
+              <div className="flex items-center gap-3 text-xs text-slate-400 pt-1">
+                <span className="flex items-center gap-1.5 text-slate-300 font-mono">
+                  <Fingerprint className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Lead Architect:</span>
+                  <strong className="text-white">{config.developer || 'IramX'}</strong>
+                </span>
+                <span>•</span>
+                <span className="text-slate-400">v{config.botVersion || '3.5'} Production</span>
+              </div>
             </div>
 
-            {/* Right Column: Passcode Unlock Card */}
+            {/* Right Column: Interactive Cyber Authentication Card */}
             <div className="lg:col-span-5">
-              <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-6 sm:p-7 shadow-xl relative">
-                <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4">
-                  <Lock className="w-6 h-6" />
+              <div className="bg-slate-950/90 border border-slate-800/90 rounded-2xl p-6 sm:p-7 shadow-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-5">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500/20 to-amber-600/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-lg shadow-amber-500/10">
+                    <Lock className="w-6 h-6" />
+                  </div>
+                  <span className="text-[10px] font-mono px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                    LEVEL-4 ROOT
+                  </span>
                 </div>
 
-                <h3 className="text-lg font-bold text-white mb-1">
-                  Authenticate Clearance
-                </h3>
+                <h2 className="text-xl font-bold text-white mb-1.5">
+                  Administrator Entrance
+                </h2>
                 <p className="text-xs text-slate-400 mb-5 leading-relaxed">
-                  Enter master administrative passcode to access the operations suite.
+                  Enter administrative passcode or use 1-click developer clearance to access the control panel.
                 </p>
 
                 <form
@@ -180,8 +212,8 @@ export const AdminGate: React.FC<AdminGateProps> = ({ onUnlock, stats, config })
                 >
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                      <span>Master Passcode</span>
-                      <span className="text-[11px] text-slate-500 font-mono">Owner PIN</span>
+                      <span>Passcode / Key</span>
+                      <span className="text-[11px] text-slate-500 font-mono">Optional</span>
                     </label>
                     <div className="relative">
                       <input
@@ -189,8 +221,8 @@ export const AdminGate: React.FC<AdminGateProps> = ({ onUnlock, stats, config })
                         type={showPasscode ? 'text' : 'password'}
                         value={passcode}
                         onChange={(e) => setPasscode(e.target.value)}
-                        placeholder="Enter passcode (e.g. iramx2026)"
-                        className="w-full bg-slate-900 border border-slate-700 focus:border-amber-500 text-white font-mono text-sm px-3.5 py-2.5 rounded-xl pr-10 focus:outline-none transition"
+                        placeholder="Enter master passcode (or click Instant)"
+                        className="w-full bg-slate-900 border border-slate-700/80 focus:border-amber-500 text-white font-mono text-sm px-3.5 py-2.5 rounded-xl pr-10 focus:outline-none transition shadow-inner"
                       />
                       <button
                         type="button"
@@ -204,28 +236,34 @@ export const AdminGate: React.FC<AdminGateProps> = ({ onUnlock, stats, config })
                   </div>
 
                   {errorMsg && (
-                    <div className="p-3 rounded-xl bg-red-500/15 border border-red-500/30 flex items-center gap-2 text-xs text-red-300">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                    <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center gap-2 text-xs text-rose-300 animate-fadeIn">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
                       <span>{errorMsg}</span>
                     </div>
                   )}
 
                   <div className="space-y-2.5 pt-1">
+                    {/* Primary Button */}
                     <button
                       id="admin-submit-passcode-btn"
                       type="submit"
                       disabled={isAuthorizing}
-                      className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
+                      className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-600 to-amber-500 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-extrabold text-xs shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 tracking-wide"
                     >
-                      {isAuthorizing ? (
+                      {authStep === 'scanning' ? (
                         <>
                           <span className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                          <span>Verifying Root Credentials...</span>
+                          <span>Verifying Root Clearance...</span>
+                        </>
+                      ) : authStep === 'granted' ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-950" />
+                          <span>Clearance Granted! Opening...</span>
                         </>
                       ) : (
                         <>
                           <Key className="w-4 h-4" />
-                          <span>Unlock Admin Panel</span>
+                          <span>Unlock Operations Panel</span>
                         </>
                       )}
                     </button>
@@ -233,27 +271,27 @@ export const AdminGate: React.FC<AdminGateProps> = ({ onUnlock, stats, config })
                     <div className="relative flex items-center justify-center my-2">
                       <div className="border-t border-slate-800 w-full" />
                       <span className="bg-slate-950 px-2 text-[10px] text-slate-500 font-mono uppercase tracking-wider">
-                        Or Instant Access
+                        Fast Entrance
                       </span>
                     </div>
 
+                    {/* Instant Developer Unlock Button */}
                     <button
                       id="admin-instant-unlock-btn"
                       type="button"
                       onClick={handleInstantUnlock}
                       disabled={isAuthorizing}
-                      className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                      className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700/80 hover:border-amber-500/50 font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-sm group"
                     >
-                      <Unlock className="w-4 h-4 text-amber-400" />
+                      <Sparkles className="w-4 h-4 text-amber-400 group-hover:rotate-12 transition transform" />
                       <span>⚡ Instant Unlock (Master Developer Clearance)</span>
                     </button>
                   </div>
                 </form>
 
-                <div className="mt-4 pt-3 border-t border-slate-800/80 text-center">
-                  <span className="text-[11px] text-slate-500 font-mono">
-                    Owner: {config.developer} • Protected Session
-                  </span>
+                <div className="mt-5 pt-3 border-t border-slate-800/80 text-center flex items-center justify-center gap-2 text-[11px] text-slate-500 font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  <span>SSL & HMAC Authenticated Session</span>
                 </div>
               </div>
             </div>
