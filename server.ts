@@ -2076,17 +2076,10 @@ Your daily allowance has been permanently upgraded!`;
   // The bot only works in group chats. DM is disabled for everyone EXCEPT Admins and users granted allowDm via Admin Panel.
   const canUseDm = user.role === 'admin' || user.allowDm === true || String(userId) === String(ADMIN_USER_ID);
   if (isPrivate && !canUseDm) {
-    const dmBlockedMsg = `🚫 *BOT DIRECT MESSAGE (DM) MEIN WORK NAHI KARTA!*
-━━━━━━━━━━━━━━━━━━━━━━━━━
-Ye bot direct message (DM) mein work nahi karta.
-Aapko sabhi OSINT lookups hamare official group ke andar hi run karne honge:
+    const dmBlockedMsg = `🚫 *Bot DM mein work nahi karta!*
 
-👥 *Official Group:* [lookupXchat](${OFFICIAL_GROUP_URL})
-🆔 *Group ID:* \`${OFFICIAL_GROUP_ID}\`
-
-👉 Niche button par click karke official group join karein aur wahan lookup run karein!
-*(Agar aapko DM access chahiye to Admin Panel se DM access allow karwayein)*
-━━━━━━━━━━━━━━━━━━━━━━━━━`;
+Sabhi lookups hamare official group mein run karein:
+👥 *Group:* [lookupXchat](${OFFICIAL_GROUP_URL})`;
     await sendTelegramMessage(chatId, dmBlockedMsg, {
       inline_keyboard: [
         [
@@ -2100,12 +2093,10 @@ Aapko sabhi OSINT lookups hamare official group ke andar hi run karne honge:
   // ── OFFICIAL GROUP RESTRICTION ──
   // If used in an unauthorized group, inform and auto-delete
   if (isGroup && OFFICIAL_GROUP_ID && String(chatId) !== String(OFFICIAL_GROUP_ID) && user.role !== 'admin') {
-    const unauthGroupMsg = `⚠️ *IS GROUP MEIN BOT ALLOWED NAHI HAI!*
-━━━━━━━━━━━━━━━━━━━━━━━━━
-Ye bot sirf hamare official group ke andar operate karta hai:
-👉 [Join Official Group](${OFFICIAL_GROUP_URL})
-🆔 *Group ID:* \`${OFFICIAL_GROUP_ID}\`
-━━━━━━━━━━━━━━━━━━━━━━━━━`;
+    const unauthGroupMsg = `⚠️ *Is group mein bot allowed nahi hai!*
+
+Bot sirf hamare official group mein work karta hai:
+👉 [Join Official Group](${OFFICIAL_GROUP_URL})`;
     const sentId = await sendTelegramMessage(chatId, unauthGroupMsg);
     scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
     return;
