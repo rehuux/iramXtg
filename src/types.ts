@@ -60,6 +60,22 @@ export interface BotButton {
   enabled: boolean;
   isCustom?: boolean;
   sortOrder?: number;
+  dailyLimit?: number;
+}
+
+export interface BotUser {
+  userId: string;
+  role: 'admin' | 'premium' | 'free';
+  dailySearches: number;
+  dailyLimit: number;
+  remaining: number;
+  totalSearches: number;
+  channelVerified: boolean;
+  referralCount: number;
+  referralBonusDaily?: number;
+  allowDm: boolean;
+  lastSearchDate: string;
+  dailyButtonUsage?: Record<string, number>;
 }
 
 export interface RedeemCode {

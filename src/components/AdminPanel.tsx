@@ -24,9 +24,15 @@ import {
   CheckCircle,
   Database,
   Terminal,
-  Code
+  Code,
+  MessageSquare,
+  Lock,
+  Unlock,
+  UserCheck,
+  UserPlus,
+  Shield
 } from 'lucide-react';
-import type { StatsData, BotConfig, RedeemCode, BotButton } from '../types';
+import type { StatsData, BotConfig, RedeemCode, BotButton, BotUser } from '../types';
 
 interface AdminPanelProps {
   stats: StatsData;
@@ -48,6 +54,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
   const [editApiUrl, setEditApiUrl] = useState('');
   const [editLabel, setEditLabel] = useState('');
   const [editPlaceholder, setEditPlaceholder] = useState('');
+  const [editDailyLimit, setEditDailyLimit] = useState<number>(0);
   const [savingButton, setSavingButton] = useState(false);
   const [buttonActionMsg, setButtonActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -59,7 +66,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
   const [newPlaceholder, setNewPlaceholder] = useState('');
   const [newExample, setNewExample] = useState('');
   const [newDescription, setNewDescription] = useState('');
+  const [newDailyLimit, setNewDailyLimit] = useState<number>(0);
   const [addingButton, setAddingButton] = useState(false);
+
+  // User & DM Permission Management State
+  const [users, setUsers] = useState<BotUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [userActionMsg, setUserActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [newUserId, setNewUserId] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'free' | 'premium' | 'admin'>('free');
+  const [newUserAllowDm, setNewUserAllowDm] = useState(true);
+  const [addingUser, setAddingUser] = useState(false);
 
   // SQL Modal / View State
   const [showSqlModal, setShowSqlModal] = useState(false);
@@ -96,6 +113,100 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
     }
   };
 
+  const fetchUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await fetch('/api/admin/users');
+      const data = await res.json();
+      if (data.users) {
+        setUsers(data.users);
+      }
+    } catch (err) {
+      console.error('Failed to load users', err);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const handleToggleDm = async (userId: string, currentAllowDm: boolean) => {
+    try {
+      const res = await fetch('/api/admin/users/allow-dm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, allowDm: !currentAllowDm }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUsers((prev) =>
+          prev.map((u) => (u.userId === userId ? { ...u, allowDm: !currentAllowDm } : u))
+        );
+        setUserActionMsg({
+          type: 'success',
+          text: `User ${userId} DM access is now ${!currentAllowDm ? 'ALLOWED (Active in DM)' : 'DISABLED (Group only)'}.`,
+        });
+      } else {
+        setUserActionMsg({ type: 'error', text: data.error || 'Failed to toggle DM.' });
+      }
+    } catch (e: any) {
+      setUserActionMsg({ type: 'error', text: e.message || 'Error updating DM access.' });
+    }
+  };
+
+  const handleChangeRole = async (userId: string, newRole: string) => {
+    try {
+      const res = await fetch('/api/admin/users/role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, role: newRole }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUsers((prev) =>
+          prev.map((u) => (u.userId === userId ? { ...u, role: newRole as any, allowDm: newRole === 'admin' ? true : u.allowDm } : u))
+        );
+        setUserActionMsg({
+          type: 'success',
+          text: `User ${userId} role changed to ${newRole.toUpperCase()}.`,
+        });
+      }
+    } catch (e: any) {
+      setUserActionMsg({ type: 'error', text: e.message || 'Error updating user role.' });
+    }
+  };
+
+  const handleAddUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUserId.trim()) return;
+    setAddingUser(true);
+    setUserActionMsg(null);
+    try {
+      const res = await fetch('/api/admin/users/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: newUserId.trim(),
+          role: newUserRole,
+          allowDm: newUserAllowDm,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUserActionMsg({
+          type: 'success',
+          text: `User ${newUserId.trim()} successfully configured with DM = ${newUserAllowDm ? 'ALLOWED' : 'DISABLED'}.`,
+        });
+        setNewUserId('');
+        fetchUsers();
+      } else {
+        setUserActionMsg({ type: 'error', text: data.error || 'Failed to register user.' });
+      }
+    } catch (e: any) {
+      setUserActionMsg({ type: 'error', text: e.message || 'Error registering user.' });
+    } finally {
+      setAddingUser(false);
+    }
+  };
+
   const handleToggleButton = async (btn: BotButton) => {
     try {
       const res = await fetch('/api/admin/buttons/toggle', {
@@ -126,6 +237,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
     setEditLabel(btn.label);
     setEditApiUrl(btn.apiUrl || '');
     setEditPlaceholder(btn.placeholder || '');
+    setEditDailyLimit(btn.dailyLimit !== undefined ? btn.dailyLimit : 0);
   };
 
   const handleSaveEdit = async (btnId: string) => {
@@ -140,15 +252,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
           label: editLabel.trim(),
           apiUrl: editApiUrl.trim(),
           placeholder: editPlaceholder.trim(),
+          dailyLimit: Number(editDailyLimit) || 0,
         }),
       });
       const data = await res.json();
       if (data.success) {
         setButtons((prev) =>
-          prev.map((b) => (b.id === btnId ? { ...b, label: editLabel.trim(), apiUrl: editApiUrl.trim(), placeholder: editPlaceholder.trim() } : b))
+          prev.map((b) =>
+            b.id === btnId
+              ? {
+                  ...b,
+                  label: editLabel.trim(),
+                  apiUrl: editApiUrl.trim(),
+                  placeholder: editPlaceholder.trim(),
+                  dailyLimit: Number(editDailyLimit) || 0,
+                }
+              : b
+          )
         );
         setEditingButtonId(null);
-        setButtonActionMsg({ type: 'success', text: `Button "${editLabel.trim()}" name & API details updated successfully!` });
+        setButtonActionMsg({
+          type: 'success',
+          text: `Button "${editLabel.trim()}" name, API details & daily limit (${editDailyLimit > 0 ? editDailyLimit : 'Unlimited'}) updated successfully!`,
+        });
         if (onButtonsUpdated) onButtonsUpdated();
       } else {
         setButtonActionMsg({ type: 'error', text: data.error || 'Failed to update button.' });
@@ -177,6 +303,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
           placeholder: newPlaceholder.trim() || `Enter ${newLabel.trim()} query`,
           example: newExample.trim(),
           description: newDescription.trim() || `Custom OSINT lookup module for ${newLabel.trim()}`,
+          dailyLimit: Number(newDailyLimit) || 0,
         }),
       });
       const data = await res.json();
@@ -187,8 +314,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
         setNewPlaceholder('');
         setNewExample('');
         setNewDescription('');
+        setNewDailyLimit(0);
         setShowAddForm(false);
-        setButtonActionMsg({ type: 'success', text: `🎉 New Button "${data.button.label}" added and active on Telegram & Web!` });
+        setButtonActionMsg({
+          type: 'success',
+          text: `🎉 New Button "${data.button.label}" added with daily limit ${data.button.dailyLimit > 0 ? data.button.dailyLimit : 'Unlimited'} and active on Telegram & Web!`,
+        });
         if (onButtonsUpdated) onButtonsUpdated();
       } else {
         setButtonActionMsg({ type: 'error', text: data.error || 'Failed to add new button.' });
@@ -218,7 +349,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
     }
   };
 
-  const sqlCode = `-- SQL Commands to create bot_buttons table in Supabase
+  const sqlCode = `-- SQL Commands to create bot_buttons & bot_users tables in Supabase
 -- Run this in your Supabase SQL Editor:
 
 CREATE TABLE IF NOT EXISTS bot_buttons (
@@ -232,17 +363,32 @@ CREATE TABLE IF NOT EXISTS bot_buttons (
   enabled BOOLEAN DEFAULT true,
   is_custom BOOLEAN DEFAULT false,
   sort_order INT DEFAULT 99,
+  daily_limit INT DEFAULT 0,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Users & DM Access Table
+CREATE TABLE IF NOT EXISTS bot_users (
+  user_id TEXT PRIMARY KEY,
+  role TEXT DEFAULT 'free',
+  daily_searches INT DEFAULT 0,
+  total_searches INT DEFAULT 0,
+  allow_dm BOOLEAN DEFAULT false,
+  last_search_date TEXT,
+  referral_count INT DEFAULT 0,
+  daily_button_usage JSONB DEFAULT '{}',
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Enable Row Level Security (RLS)
 ALTER TABLE bot_buttons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_users ENABLE ROW LEVEL SECURITY;
 
--- Allow all operations for service_role or authenticated, and public read:
 CREATE POLICY "Public Read Bot Buttons" ON bot_buttons FOR SELECT USING (true);
 CREATE POLICY "Allow All Bot Buttons" ON bot_buttons FOR ALL USING (true);
+CREATE POLICY "Public Read Bot Users" ON bot_users FOR SELECT USING (true);
+CREATE POLICY "Allow All Bot Users" ON bot_users FOR ALL USING (true);
 
--- Optional: Create index on sort_order and enabled for rapid retrieval
 CREATE INDEX IF NOT EXISTS idx_bot_buttons_enabled ON bot_buttons (enabled);
 CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
 `;
@@ -271,6 +417,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
   useEffect(() => {
     fetchCodes();
     fetchButtons();
+    fetchUsers();
   }, []);
 
   const handleGenerateCodes = async () => {
@@ -377,6 +524,8 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
           onClick={() => {
             onRefreshStats();
             fetchCodes();
+            fetchButtons();
+            fetchUsers();
           }}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition cursor-pointer"
         >
@@ -820,6 +969,20 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                 />
               </div>
 
+              <div>
+                <label className="text-[11px] font-medium text-slate-300 block mb-1">
+                  Daily Limit Per User: <span className="text-slate-500 font-normal">(0 = unlimited / global quota)</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={newDailyLimit}
+                  onChange={(e) => setNewDailyLimit(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  placeholder="e.g. 3 for mobile, 4 for aadhar"
+                  className="w-full bg-slate-900 text-white text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
               <div className="sm:col-span-2">
                 <label className="text-[11px] font-medium text-slate-300 block mb-1">Short Description:</label>
                 <input
@@ -885,6 +1048,9 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                         >
                           {btn.enabled ? '● ACTIVE' : '○ DISABLED (OFF)'}
                         </span>
+                        <span className="text-[10px] px-2 py-0.2 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-medium">
+                          🎯 Limit: {btn.dailyLimit && btn.dailyLimit > 0 ? `${btn.dailyLimit}/day` : 'No Limit'}
+                        </span>
                         {btn.isCustom && (
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
                             Custom
@@ -922,15 +1088,30 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                               />
                             </div>
                           </div>
-                          <div>
-                            <label className="text-[10px] text-slate-300 font-medium block">API Endpoint URL:</label>
-                            <input
-                              type="url"
-                              value={editApiUrl}
-                              onChange={(e) => setEditApiUrl(e.target.value)}
-                              placeholder="https://api.example.com/search?query="
-                              className="w-full bg-slate-950 text-white font-mono text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
-                            />
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div className="sm:col-span-2">
+                              <label className="text-[10px] text-slate-300 font-medium block">API Endpoint URL:</label>
+                              <input
+                                type="url"
+                                value={editApiUrl}
+                                onChange={(e) => setEditApiUrl(e.target.value)}
+                                placeholder="https://api.example.com/search?query="
+                                className="w-full bg-slate-950 text-white font-mono text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-300 font-medium block">
+                                Daily Limit Per User: <span className="text-slate-500">(0 = unlimited)</span>
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={editDailyLimit}
+                                onChange={(e) => setEditDailyLimit(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                                placeholder="e.g. 3"
+                                className="w-full bg-slate-950 text-white font-mono text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
+                              />
+                            </div>
                           </div>
                           <div className="flex items-center gap-2 pt-1">
                             <button
@@ -1041,6 +1222,219 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
           </div>
         </div>
       )}
+
+      {/* Section: Telegram User Management & DM Whitelist */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-semibold text-white">Telegram Users & Private DM Access Whitelist</h4>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
+                  Group: -1002164265666
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Bot sirf authorized group (<a href="https://t.me/lookupXchat" target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline">@lookupXchat</a>) me work karta hai aur 40s me message delete ho jata hai. DM me bot tabhi chalega agar user yahan se Whitelisted ho.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={fetchUsers}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition cursor-pointer"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingUsers ? 'animate-spin' : ''}`} />
+            <span>Reload Users</span>
+          </button>
+        </div>
+
+        {/* User Action Message */}
+        {userActionMsg && (
+          <div
+            className={`p-3 rounded-xl text-xs flex items-center justify-between border ${
+              userActionMsg.type === 'success'
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+            }`}
+          >
+            <span>{userActionMsg.text}</span>
+            <button onClick={() => setUserActionMsg(null)} className="text-slate-400 hover:text-white">
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Add / Whitelist User Form */}
+        <form onSubmit={handleAddUser} className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+              <UserPlus className="w-4 h-4" /> Whitelist Telegram User ID for DM or Admin
+            </span>
+            <span className="text-[11px] text-slate-500">Admins always have full DM access</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="text-[11px] font-medium text-slate-300 block mb-1">Telegram User ID:</label>
+              <input
+                type="text"
+                required
+                value={newUserId}
+                onChange={(e) => setNewUserId(e.target.value)}
+                placeholder="e.g. 123456789 or 6012345678"
+                className="w-full bg-slate-900 text-white font-mono text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-medium text-slate-300 block mb-1">Role / Tier:</label>
+              <select
+                value={newUserRole}
+                onChange={(e) => setNewUserRole(e.target.value as any)}
+                className="w-full bg-slate-900 text-white text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-emerald-500 focus:outline-none"
+              >
+                <option value="free">Free User (20 searches/day)</option>
+                <option value="premium">VIP Premium (Unlimited searches)</option>
+                <option value="admin">Admin (Full Control & DM)</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-3 pt-4 sm:pt-6">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={newUserAllowDm || newUserRole === 'admin'}
+                  disabled={newUserRole === 'admin'}
+                  onChange={(e) => setNewUserAllowDm(e.target.checked)}
+                  className="rounded bg-slate-900 border-slate-700 text-emerald-500 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="flex items-center gap-1">
+                  <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+                  Allow Bot Use in Private DM
+                </span>
+              </label>
+
+              <button
+                type="submit"
+                disabled={addingUser || !newUserId.trim()}
+                className="ml-auto px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white text-xs font-semibold transition cursor-pointer"
+              >
+                {addingUser ? 'Saving...' : 'Whitelist User'}
+              </button>
+            </div>
+          </div>
+        </form>
+
+        {/* Users Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px] tracking-wider">
+                <th className="py-2.5 px-3">Telegram User ID</th>
+                <th className="py-2.5 px-3">Role</th>
+                <th className="py-2.5 px-3">Private DM Access</th>
+                <th className="py-2.5 px-3">Today's Lookups</th>
+                <th className="py-2.5 px-3">Referrals</th>
+                <th className="py-2.5 px-3">Button Breakdown</th>
+                <th className="py-2.5 px-3 text-right">DM Toggle</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60">
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="text-center py-6 text-slate-500">
+                    {loadingUsers ? 'Loading registered users...' : 'No users registered yet. Add a user ID above.'}
+                  </td>
+                </tr>
+              ) : (
+                users.map((u) => {
+                  const isUserAdmin = u.role === 'admin';
+                  return (
+                    <tr key={u.userId} className="hover:bg-slate-800/40 transition">
+                      <td className="py-2.5 px-3 font-mono font-bold text-white flex items-center gap-1.5">
+                        {isUserAdmin && <Shield className="w-3.5 h-3.5 text-amber-400" />}
+                        <span>{u.userId}</span>
+                      </td>
+
+                      <td className="py-2.5 px-3">
+                        <select
+                          value={u.role}
+                          onChange={(e) => handleChangeRole(u.userId, e.target.value)}
+                          className="bg-slate-950 text-white text-[11px] px-2 py-1 rounded border border-slate-700 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                        >
+                          <option value="free">Free</option>
+                          <option value="premium">VIP</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </td>
+
+                      <td className="py-2.5 px-3">
+                        {isUserAdmin || u.allowDm ? (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-medium flex items-center gap-1 w-max">
+                            <Unlock className="w-3 h-3 text-emerald-400" />
+                            <span>DM Allowed</span>
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[10px] font-medium flex items-center gap-1 w-max">
+                            <Lock className="w-3 h-3 text-rose-400" />
+                            <span>Group Only</span>
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="py-2.5 px-3 text-slate-300">
+                        <span className="font-mono font-semibold">{u.dailySearches}</span>
+                        <span className="text-slate-500"> / {u.role === 'free' ? u.dailyLimit : '∞'}</span>
+                      </td>
+
+                      <td className="py-2.5 px-3 text-slate-300">
+                        {u.referralCount ? (
+                          <span className="text-cyan-400 font-semibold font-mono">
+                            {u.referralCount} (+{u.referralBonusDaily || u.referralCount * 10}/day)
+                          </span>
+                        ) : (
+                          <span className="text-slate-500">0</span>
+                        )}
+                      </td>
+
+                      <td className="py-2.5 px-3 text-[11px] font-mono text-slate-400 max-w-xs truncate">
+                        {u.dailyButtonUsage && Object.keys(u.dailyButtonUsage).length > 0 ? (
+                          Object.entries(u.dailyButtonUsage)
+                            .map(([btnKey, count]) => `${btnKey}:${count}`)
+                            .join(', ')
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
+                      </td>
+
+                      <td className="py-2.5 px-3 text-right">
+                        {isUserAdmin ? (
+                          <span className="text-[10px] text-amber-400 font-mono">Master</span>
+                        ) : (
+                          <button
+                            onClick={() => handleToggleDm(u.userId, Boolean(u.allowDm))}
+                            className={`px-2.5 py-1 rounded text-[11px] font-medium transition cursor-pointer border ${
+                              u.allowDm
+                                ? 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
+                                : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25'
+                            }`}
+                          >
+                            {u.allowDm ? 'Block DM' : 'Allow DM'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* Telegram Bot Integration Card */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">

@@ -38,6 +38,7 @@ export interface BotButton {
   enabled: boolean;
   isCustom?: boolean;
   sortOrder?: number;
+  dailyLimit?: number; // 0 or undefined = unlimited (up to global daily limit)
 }
 
 const DEFAULT_BUTTONS: BotButton[] = [
@@ -51,6 +52,7 @@ const DEFAULT_BUTTONS: BotButton[] = [
     description: 'Telecom database lookup for operator, subscriber and circle data.',
     enabled: true,
     sortOrder: 1,
+    dailyLimit: 3,
   },
   {
     id: 'vehicle',
@@ -73,6 +75,7 @@ const DEFAULT_BUTTONS: BotButton[] = [
     description: 'Verify Aadhaar profile registration status and metadata.',
     enabled: true,
     sortOrder: 3,
+    dailyLimit: 4,
   },
   {
     id: 'aadhar2family',
@@ -188,7 +191,11 @@ const DEVELOPER_LINK   = "https://t.me/gotweeds";
 const CHANNEL_ID       = process.env.CHANNEL_ID || "-1002085221963";
 const CHANNEL_LINK     = process.env.CHANNEL_URL || "https://t.me/rehuszr";
 const CHANNEL_USERNAME = "@RehuSzr";
-const SUPPORT_GROUP    = "@foreveriram";
+const OFFICIAL_GROUP_ID = process.env.OFFICIAL_GROUP_ID || "-1002164265666";
+const OFFICIAL_GROUP_URL = process.env.OFFICIAL_GROUP_URL || "https://t.me/lookupXchat";
+const OFFICIAL_GROUP_USERNAME = "@lookupXchat";
+const SUPPORT_GROUP    = "@lookupXchat";
+const AUTO_DELETE_DELAY_MS = 40000; // 40 seconds auto-destruct in groups
 const FREE_DAILY_LIMIT = 20;
 const REFERRAL_BONUS_PER_USER = 10; // +10 extra credit daily per referral!
 
@@ -205,6 +212,8 @@ interface UserRecord {
   referralCount: number;
   referralBonusDaily: number;
   referredUsers: string[];
+  allowDm?: boolean;
+  dailyButtonUsage?: Record<string, number>;
 }
 
 interface RedeemCodeRecord {
@@ -243,6 +252,7 @@ async function loadUsersFromSupabase(): Promise<void> {
           referralCount: Number(row.referral_count) || 0,
           referralBonusDaily: Number(row.referral_bonus_daily) || 0,
           referredUsers: [],
+          allowDm: Boolean(row.allow_dm),
         });
       }
       console.log(`📦 Loaded & restored ${data.length} users from Supabase permanent database.`);
@@ -265,6 +275,7 @@ async function persistUser(user: UserRecord): Promise<void> {
       referred_by: user.referredBy || null,
       referral_count: user.referralCount || 0,
       referral_bonus_daily: user.referralBonusDaily || 0,
+      allow_dm: Boolean(user.allowDm),
       updated_at: new Date().toISOString()
     }, { onConflict: 'id' });
     if (error) {
@@ -310,6 +321,7 @@ async function loadButtonsFromSupabase(): Promise<void> {
           enabled: row.enabled !== false,
           isCustom: Boolean(row.is_custom),
           sortOrder: row.sort_order || 99,
+          dailyLimit: row.daily_limit !== undefined ? Number(row.daily_limit) : undefined,
         });
       }
       console.log(`📦 Loaded ${data.length} dynamic buttons & APIs from Supabase bot_buttons.`);
@@ -333,6 +345,7 @@ async function persistButton(btn: BotButton): Promise<void> {
       enabled: btn.enabled,
       is_custom: Boolean(btn.isCustom),
       sort_order: btn.sortOrder || 99,
+      daily_limit: btn.dailyLimit || 0,
       updated_at: new Date().toISOString()
     }, { onConflict: 'id' });
     if (error) {
@@ -398,15 +411,58 @@ function getUser(userId: string | number): UserRecord {
       referralCount: 0,
       referralBonusDaily: 0,
       referredUsers: [],
+      allowDm: idStr === String(ADMIN_USER_ID),
+      dailyButtonUsage: {},
     };
     usersStore.set(idStr, user);
     persistUser(user).catch(() => {});
   } else if (user.lastSearchDate !== today) {
     user.dailySearches = 0;
+    user.dailyButtonUsage = {};
     user.lastSearchDate = today;
     persistUser(user).catch(() => {});
   }
   return user;
+}
+
+function getUserButtonUsage(user: UserRecord, buttonId: string): number {
+  if (!user.dailyButtonUsage) user.dailyButtonUsage = {};
+  return user.dailyButtonUsage[buttonId] || 0;
+}
+
+function recordButtonUsage(user: UserRecord, buttonId: string): void {
+  if (!user.dailyButtonUsage) user.dailyButtonUsage = {};
+  user.dailyButtonUsage[buttonId] = (user.dailyButtonUsage[buttonId] || 0) + 1;
+  persistUser(user).catch(() => {});
+}
+
+function checkButtonDailyLimit(user: UserRecord, buttonId: string): { allowed: boolean; limit: number; current: number } {
+  if (user.role === 'admin' || user.role === 'premium') {
+    return { allowed: true, limit: 999, current: 0 };
+  }
+  const btn = buttonsStore.get(buttonId);
+  const limit = btn && typeof btn.dailyLimit === 'number' ? btn.dailyLimit : 0;
+  if (limit <= 0) {
+    return { allowed: true, limit: 0, current: getUserButtonUsage(user, buttonId) };
+  }
+  const current = getUserButtonUsage(user, buttonId);
+  if (current >= limit) {
+    return { allowed: false, limit, current };
+  }
+  return { allowed: true, limit, current };
+}
+
+function checkAndEnforceButtonLimit(user: UserRecord, buttonId: string): { allowed: boolean; message: string } {
+  const check = checkButtonDailyLimit(user, buttonId);
+  if (!check.allowed) {
+    const btn = buttonsStore.get(buttonId);
+    const label = btn ? btn.label : buttonId;
+    return {
+      allowed: false,
+      message: `🔒 *SERVICE LIMIT REACHED TODAY!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nService: *${label}*\nAap aaj is service ko sirf *${check.limit} baar* use kar sakte the jo use ho chuka hai (${check.current}/${check.limit}).\n\n⏳ Ye limit kal subah 12:00 AM par auto reset hogi!\n🎁 Naye users ko /refer karein ya VIP code redeem karein unlimited access ke liye.\n━━━━━━━━━━━━━━━━━━━━━━━━━`
+    };
+  }
+  return { allowed: true, message: "" };
 }
 
 function recordSearch(userId: string | number): void {
@@ -572,11 +628,11 @@ let isBotActive = true;
 let lastUpdateId = 0;
 const telegramChatIds = new Set<string | number>();
 
-async function sendTelegramMessage(chatId: number | string, text: string, replyMarkup?: any) {
+async function sendTelegramMessage(chatId: number | string, text: string, replyMarkup?: any): Promise<number | null> {
   if (chatId) telegramChatIds.add(chatId);
-  if (!BOT_TOKEN) return;
+  if (!BOT_TOKEN) return null;
   try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -586,9 +642,58 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
         reply_markup: replyMarkup,
       })
     });
+    const data = await res.json();
+    if (data.ok && data.result?.message_id) {
+      return data.result.message_id;
+    }
+    // Fallback if markdown parsing fails
+    if (!data.ok && data.description?.includes('entity')) {
+      const plainRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: text.replace(/[*_`[\]()]/g, ''),
+          reply_markup: replyMarkup,
+        })
+      });
+      const plainData = await plainRes.json();
+      if (plainData.ok && plainData.result?.message_id) {
+        return plainData.result.message_id;
+      }
+    }
   } catch (err: any) {
     console.error("Telegram send error:", err.message);
   }
+  return null;
+}
+
+async function deleteTelegramMessage(chatId: number | string, messageId: number | null | undefined): Promise<boolean> {
+  if (!BOT_TOKEN || !messageId) return false;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+      })
+    });
+    const data = await res.json();
+    return Boolean(data.ok);
+  } catch {
+    return false;
+  }
+}
+
+function scheduleAutoDelete(chatId: number | string, messageIds: (number | null | undefined)[], delayMs = AUTO_DELETE_DELAY_MS) {
+  setTimeout(async () => {
+    for (const mid of messageIds) {
+      if (mid) {
+        await deleteTelegramMessage(chatId, mid).catch(() => {});
+      }
+    }
+  }, delayMs);
 }
 
 async function editTelegramMessageText(chatId: number | string, messageId: number, text: string, replyMarkup?: any) {
@@ -1143,11 +1248,11 @@ function getResultInlineKeyboard(type: string, query?: string) {
     inline_keyboard: [
       [
         { text: "🔄 Search Again", callback_data: `action_${type}` },
-        { text: type === 'num2' ? "🚗 Vehicle RC" : "📱 Num2 Lookup", callback_data: type === 'num2' ? "action_vehicle" : "action_num2" }
+        { text: "🗑️ Delete Now", callback_data: "action_delmsg" }
       ],
       [
-        { text: "🏠 Main Menu", callback_data: "action_main" },
-        { text: "📢 Official Channel", url: CHANNEL_LINK }
+        { text: "👥 Official Group", url: OFFICIAL_GROUP_URL },
+        { text: "📢 Updates Channel", url: CHANNEL_LINK }
       ]
     ]
   };
@@ -1416,6 +1521,16 @@ async function handleTelegramCallbackQuery(cq: any) {
   const chatId = cq.message?.chat?.id || userId;
   const data = cq.data;
 
+  const chatType = cq.message?.chat?.type || (Number(chatId) < 0 ? 'supergroup' : 'private');
+  const isPrivate = chatType === 'private' || Number(chatId) > 0;
+  const user = getUser(userId);
+  const canUseDm = user.role === 'admin' || user.allowDm === true || String(userId) === String(ADMIN_USER_ID);
+
+  if (isPrivate && !canUseDm && data !== "verify_membership" && data !== "check_join") {
+    await answerTelegramCallbackQuery(cqId, "🚫 Bot DM mein allowed nahi hai. Official group use karein!", true);
+    return;
+  }
+
   if (data === "verify_membership" || data === "check_join") {
     const check = await checkTelegramChannelMembership(userId);
     if (check.isMember) {
@@ -1454,6 +1569,14 @@ You have not joined our official intelligence updates channel yet:
   if (data.startsWith("action_")) {
     const act = data.replace("action_", "");
     const user = getUser(userId);
+
+    if (act === "delmsg") {
+      if (cq.message?.message_id) {
+        await deleteTelegramMessage(chatId, cq.message.message_id);
+        await answerTelegramCallbackQuery(cqId, "Message deleted 🗑️");
+      }
+      return;
+    }
 
     if (act === "cancel") {
       user.pendingAction = undefined;
@@ -1851,38 +1974,58 @@ function formatGenericCustomCard(label: string, data: any, query: string): strin
     return `❌ *NO RECORDS LOCATED*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔍 *Service:* ${label}\n🎯 *Input Query:* \`${query}\`\n\nNo records found or remote endpoint returned empty response.\n━━━━━━━━━━━━━━━━━━━━━━━━━`;
   }
 
-  let formatted = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n┃   ${label.toUpperCase()}\n╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n`;
-  formatted += `🎯 *Query Target:* \`${query}\`\n`;
-  formatted += `⏱️ *Generated:* \`${new Date().toLocaleString('en-IN')}\`\n`;
-  formatted += `━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-
-  if (typeof data === 'object') {
-    const entries = Object.entries(data).slice(0, 15);
-    for (const [key, value] of entries) {
-      if (typeof value === 'object' && value !== null) {
-        formatted += `• *${key}:* \`${JSON.stringify(value).slice(0, 80)}\`\n`;
-      } else {
-        formatted += `• *${key}:* \`${String(value || 'N/A')}\`\n`;
-      }
+  let jsonStr = "";
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data);
+      jsonStr = JSON.stringify(parsed, null, 2);
+    } catch {
+      jsonStr = data;
     }
   } else {
-    formatted += `\`${String(data).slice(0, 500)}\`\n`;
+    try {
+      jsonStr = JSON.stringify(data, null, 2);
+    } catch {
+      jsonStr = String(data);
+    }
   }
 
+  // Telegram max length safety: leave room for header & footer
+  if (jsonStr.length > 3400) {
+    jsonStr = jsonStr.slice(0, 3400) + "\n... [truncated for Telegram message size limit]";
+  }
+
+  let formatted = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n┃   ${label.toUpperCase()}\n╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n`;
+  formatted += `🎯 *Target:* \`${query}\`\n`;
+  formatted += `⏱️ *Generated:* \`${new Date().toLocaleString('en-IN')}\`\n`;
+  formatted += `━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  formatted += `\`\`\`json\n${jsonStr}\n\`\`\`\n`;
   formatted += `━━━━━━━━━━━━━━━━━━━━━━━━━\n🔒 *Verified via ${BOT_NAME} v${BOT_VERSION}*`;
   return formatted;
 }
 
-async function sendSearchResult(chatId: number | string, user: UserRecord, card: string, type: string, query?: string) {
+async function sendSearchResult(chatId: number | string, user: UserRecord, card: string, type: string, query?: string, userMessageId?: number) {
   user.pendingAction = undefined;
-  await sendTelegramMessage(chatId, card, getResultInlineKeyboard(type, query));
-  await sendTelegramMessage(chatId, "⚡ Select next service below or send a query directly:", getMainReplyKeyboard(user));
+  const isGroup = String(chatId).startsWith("-");
+  const resultMsgId = await sendTelegramMessage(chatId, card, getResultInlineKeyboard(type, query));
+
+  if (isGroup) {
+    // Auto-delete both user's lookup query and bot's lookup response after 40 seconds
+    scheduleAutoDelete(chatId, [userMessageId, resultMsgId], AUTO_DELETE_DELAY_MS);
+  } else {
+    await sendTelegramMessage(chatId, "⚡ Select next service below or send a query directly:", getMainReplyKeyboard(user));
+  }
 }
 
 async function handleTelegramUpdate(msg: any) {
   const chatId = msg.chat.id;
   const userId = msg.from?.id || chatId;
   const text = msg.text.trim();
+  const userMsgId = msg.message_id;
+
+  const chatType = msg.chat?.type || (Number(chatId) < 0 ? 'supergroup' : 'private');
+  const isPrivate = chatType === 'private' || Number(chatId) > 0;
+  const isGroup = chatType === 'group' || chatType === 'supergroup' || Number(chatId) < 0;
 
   const user = getUser(userId);
   const remaining = getUserRemaining(user);
@@ -1927,6 +2070,45 @@ Your daily allowance has been permanently upgraded!`;
         }
       }
     }
+  }
+
+  // ── DM USAGE RESTRICTION ──
+  // The bot only works in group chats. DM is disabled for everyone EXCEPT Admins and users granted allowDm via Admin Panel.
+  const canUseDm = user.role === 'admin' || user.allowDm === true || String(userId) === String(ADMIN_USER_ID);
+  if (isPrivate && !canUseDm) {
+    const dmBlockedMsg = `🚫 *BOT DIRECT MESSAGE (DM) MEIN WORK NAHI KARTA!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Ye bot direct message (DM) mein work nahi karta.
+Aapko sabhi OSINT lookups hamare official group ke andar hi run karne honge:
+
+👥 *Official Group:* [lookupXchat](${OFFICIAL_GROUP_URL})
+🆔 *Group ID:* \`${OFFICIAL_GROUP_ID}\`
+
+👉 Niche button par click karke official group join karein aur wahan lookup run karein!
+*(Agar aapko DM access chahiye to Admin Panel se DM access allow karwayein)*
+━━━━━━━━━━━━━━━━━━━━━━━━━`;
+    await sendTelegramMessage(chatId, dmBlockedMsg, {
+      inline_keyboard: [
+        [
+          { text: "👉 Join Official Group & Search", url: OFFICIAL_GROUP_URL }
+        ]
+      ]
+    });
+    return;
+  }
+
+  // ── OFFICIAL GROUP RESTRICTION ──
+  // If used in an unauthorized group, inform and auto-delete
+  if (isGroup && OFFICIAL_GROUP_ID && String(chatId) !== String(OFFICIAL_GROUP_ID) && user.role !== 'admin') {
+    const unauthGroupMsg = `⚠️ *IS GROUP MEIN BOT ALLOWED NAHI HAI!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Ye bot sirf hamare official group ke andar operate karta hai:
+👉 [Join Official Group](${OFFICIAL_GROUP_URL})
+🆔 *Group ID:* \`${OFFICIAL_GROUP_ID}\`
+━━━━━━━━━━━━━━━━━━━━━━━━━`;
+    const sentId = await sendTelegramMessage(chatId, unauthGroupMsg);
+    scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+    return;
   }
 
   // If user opens channel link
@@ -2530,6 +2712,13 @@ Invite colleagues or friends to use the bot! Each successful referral permanentl
     }
 
     if (action === 'num2') {
+      const btnCheck = checkAndEnforceButtonLimit(user, 'num2');
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       const cleanPhone = text.replace(/[^0-9]/g, '').slice(-10);
       if (cleanPhone.length < 10) {
         await sendTelegramMessage(chatId, `⚠️ *Invalid Mobile Number!*
@@ -2540,15 +2729,24 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
       }
       user.pendingAction = undefined;
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Querying Telecom Registry...*\nTarget: \`+91 ${cleanPhone}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Querying Telecom Registry...*\nTarget: \`+91 ${cleanPhone}\`...`);
       let data = await fetchWithTimeout(`${NUM2_API_URL}${cleanPhone}`);
       recordSearch(userId);
+      recordButtonUsage(user, 'num2');
       const card = formatNum2Card(data, cleanPhone);
-      await sendSearchResult(chatId, user, card, 'num2', cleanPhone);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, 'num2', cleanPhone, userMsgId);
       return;
     }
 
     if (action === 'vehicle') {
+      const btnCheck = checkAndEnforceButtonLimit(user, 'vehicle');
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       const reg = text.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
       if (reg.length < 4) {
         await sendTelegramMessage(chatId, `⚠️ *Invalid Registration Number!*
@@ -2559,27 +2757,45 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
       }
       user.pendingAction = undefined;
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Querying Vahan RC Gateway...*\nTarget: \`${reg}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Querying Vahan RC Gateway...*\nTarget: \`${reg}\`...`);
       let data = await fetchVehicleInfo(reg);
       recordSearch(userId);
+      recordButtonUsage(user, 'vehicle');
       const card = formatVehicleCard(data, reg);
-      await sendSearchResult(chatId, user, card, 'vehicle', reg);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, 'vehicle', reg, userMsgId);
       return;
     }
 
     if (action === 'voter') {
+      const btnCheck = checkAndEnforceButtonLimit(user, 'voter');
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       const epic = text.trim().toUpperCase();
       user.pendingAction = undefined;
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Searching Electoral Rolls...*\nEPIC: \`${epic}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Searching Electoral Rolls...*\nEPIC: \`${epic}\`...`);
       let data = await fetchWithTimeout(`${VOTER_API_URL}${epic}`);
       recordSearch(userId);
+      recordButtonUsage(user, 'voter');
       const card = formatVoterCard(data, epic);
-      await sendSearchResult(chatId, user, card, 'voter', epic);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, 'voter', epic, userMsgId);
       return;
     }
 
     if (action === 'aadhar2info') {
+      const btnCheck = checkAndEnforceButtonLimit(user, 'aadhar2info');
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       const aadhaar = text.replace(/[^0-9]/g, '');
       if (aadhaar.length < 12) {
         await sendTelegramMessage(chatId, `⚠️ *Invalid Aadhaar Number!*
@@ -2590,15 +2806,24 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
       }
       user.pendingAction = undefined;
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Verifying UIDAI Records...*\nTarget: \`${aadhaar.slice(0, 4)} **** ${aadhaar.slice(8)}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Verifying UIDAI Records...*\nTarget: \`${aadhaar.slice(0, 4)} **** ${aadhaar.slice(8)}\`...`);
       let data = await fetchWithTimeout(`${AADHAR2_API_URL}${aadhaar}`);
       recordSearch(userId);
+      recordButtonUsage(user, 'aadhar2info');
       const card = formatAadharCard(data, aadhaar, false);
-      await sendSearchResult(chatId, user, card, 'aadhar2info', aadhaar);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, 'aadhar2info', aadhaar, userMsgId);
       return;
     }
 
     if (action === 'aadhar2family') {
+      const btnCheck = checkAndEnforceButtonLimit(user, 'aadhar2family');
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       const aadhaar = text.replace(/[^0-9]/g, '');
       if (aadhaar.length < 12) {
         await sendTelegramMessage(chatId, `⚠️ *Invalid Aadhaar Number!*
@@ -2609,71 +2834,118 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
       }
       user.pendingAction = undefined;
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Extracting Family Tree Graph...*\nTarget: \`${aadhaar.slice(0, 4)} **** ${aadhaar.slice(8)}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Extracting Family Tree Graph...*\nTarget: \`${aadhaar.slice(0, 4)} **** ${aadhaar.slice(8)}\`...`);
       let data = await fetchWithTimeout(`${AADHAR2FAM_API_URL}${aadhaar}`);
       recordSearch(userId);
+      recordButtonUsage(user, 'aadhar2family');
       const card = formatAadharCard(data, aadhaar, true);
-      await sendSearchResult(chatId, user, card, 'aadhar2family', aadhaar);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, 'aadhar2family', aadhaar, userMsgId);
       return;
     }
 
     if (action === 'lpg') {
+      const btnCheck = checkAndEnforceButtonLimit(user, 'lpg');
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       const q = text.trim();
       user.pendingAction = undefined;
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Querying MoPNG Gas Gateway...*\nTarget: \`${q}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Querying MoPNG Gas Gateway...*\nTarget: \`${q}\`...`);
       let data = await fetchWithTimeout(`${LPG_API_URL}${q}`);
       recordSearch(userId);
+      recordButtonUsage(user, 'lpg');
       const card = formatLPGCard(data, q);
-      await sendSearchResult(chatId, user, card, 'lpg', q);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, 'lpg', q, userMsgId);
       return;
     }
 
     if (action === 'upi2num') {
+      const btnCheck = checkAndEnforceButtonLimit(user, 'upi2num');
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       const upi = text.trim();
       user.pendingAction = undefined;
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Resolving UPI VPA Handle...*\nTarget: \`${upi}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Resolving UPI VPA Handle...*\nTarget: \`${upi}\`...`);
       let data = await fetchWithTimeout(`${UPI2NUM_API_URL}${encodeURIComponent(upi)}`);
       recordSearch(userId);
+      recordButtonUsage(user, 'upi2num');
       const card = formatUPICard(data, upi);
-      await sendSearchResult(chatId, user, card, 'upi2num', upi);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, 'upi2num', upi, userMsgId);
       return;
     }
 
     if (action === 'gst2name') {
+      const btnCheck = checkAndEnforceButtonLimit(user, 'gst2name');
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       const name = text.trim();
       user.pendingAction = undefined;
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Searching GST By Business Name...*\nTarget: \`${name}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Searching GST By Business Name...*\nTarget: \`${name}\`...`);
       let data = await fetchWithTimeout(`${GST2NAME_API_URL}${encodeURIComponent(name)}`);
       recordSearch(userId);
+      recordButtonUsage(user, 'gst2name');
       const card = formatGSTCard(data, name, 'name');
-      await sendSearchResult(chatId, user, card, 'gst2name', name);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, 'gst2name', name, userMsgId);
       return;
     }
 
     if (action === 'gst2pan') {
+      const btnCheck = checkAndEnforceButtonLimit(user, 'gst2pan');
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       const pan = text.trim().toUpperCase();
       user.pendingAction = undefined;
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Resolving GSTIN By PAN...*\nPAN: \`${pan}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Resolving GSTIN By PAN...*\nPAN: \`${pan}\`...`);
       let data = await fetchWithTimeout(`${GST2PAN_API_URL}${pan}`);
       recordSearch(userId);
+      recordButtonUsage(user, 'gst2pan');
       const card = formatGSTCard(data, pan, 'pan');
-      await sendSearchResult(chatId, user, card, 'gst2pan', pan);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, 'gst2pan', pan, userMsgId);
       return;
     }
 
     if (action === 'gst') {
+      const btnCheck = checkAndEnforceButtonLimit(user, 'gst');
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       const gstin = text.trim().toUpperCase();
       user.pendingAction = undefined;
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Retrieving GSTIN Profile...*\nGSTIN: \`${gstin}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Retrieving GSTIN Profile...*\nGSTIN: \`${gstin}\`...`);
       let data = await fetchWithTimeout(`${GST_API_URL}${gstin}`);
       recordSearch(userId);
+      recordButtonUsage(user, 'gst');
       const card = formatGSTCard(data, gstin, 'gst');
-      await sendSearchResult(chatId, user, card, 'gst', gstin);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, 'gst', gstin, userMsgId);
       return;
     }
 
@@ -2716,14 +2988,23 @@ Tap *❌ Cancel & Return* below or select another service directly:`, getPromptI
     // Generic handler for custom or dynamic buttons
     const customBtn = buttonsStore.get(action);
     if (customBtn) {
+      const btnCheck = checkAndEnforceButtonLimit(user, action);
+      if (!btnCheck.allowed) {
+        user.pendingAction = undefined;
+        const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+        if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+        return;
+      }
       user.pendingAction = undefined;
       const cleanQ = text.trim();
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, `🔍 *Querying ${customBtn.label}...*\nTarget: \`${cleanQ}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Querying ${customBtn.label}...*\nTarget: \`${cleanQ}\`...`);
       let data = await fetchWithTimeout(`${customBtn.apiUrl}${encodeURIComponent(cleanQ)}`);
       recordSearch(userId);
+      recordButtonUsage(user, action);
       const card = formatGenericCustomCard(customBtn.label, data, cleanQ);
-      await sendSearchResult(chatId, user, card, action, cleanQ);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+      await sendSearchResult(chatId, user, card, action, cleanQ, userMsgId);
       return;
     }
   }
@@ -2877,14 +3158,24 @@ You have used up your free daily search allowance.
     if (!query) {
       user.pendingAction = 'vehicle';
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, getPromptCard('vehicle'), getPromptInlineKeyboard('vehicle'));
+      const promptId = await sendTelegramMessage(chatId, getPromptCard('vehicle'), getPromptInlineKeyboard('vehicle'));
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, promptId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
+    const btnCheck = checkAndEnforceButtonLimit(user, 'vehicle');
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
       return;
     }
     await sendTelegramChatAction(chatId, "typing");
+    const statusId = await sendTelegramMessage(chatId, `🔍 *Querying Vahan RC Gateway...*\nTarget: \`${query}\`...`);
     const data = await fetchVehicleInfo(query.replace(/\s+/g, ''));
     recordSearch(userId);
+    recordButtonUsage(user, 'vehicle');
     const card = formatVehicleCard(data, query);
-    await sendSearchResult(chatId, user, card, 'vehicle', query);
+    if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+    await sendSearchResult(chatId, user, card, 'vehicle', query, userMsgId);
     return;
   }
 
@@ -2893,15 +3184,25 @@ You have used up your free daily search allowance.
     if (!query) {
       user.pendingAction = 'num2';
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, getPromptCard('num2'), getPromptInlineKeyboard('num2'));
+      const promptId = await sendTelegramMessage(chatId, getPromptCard('num2'), getPromptInlineKeyboard('num2'));
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, promptId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
+    const btnCheck = checkAndEnforceButtonLimit(user, 'num2');
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
       return;
     }
     await sendTelegramChatAction(chatId, "typing");
     const cleanPhone = query.replace(/[^0-9]/g, '').slice(-10);
+    const statusId = await sendTelegramMessage(chatId, `🔍 *Querying Telecom Registry...*\nTarget: \`+91 ${cleanPhone}\`...`);
     const data = await fetchWithTimeout(`${NUM2_API_URL}${cleanPhone}`);
     recordSearch(userId);
+    recordButtonUsage(user, 'num2');
     const card = formatNum2Card(data, cleanPhone);
-    await sendSearchResult(chatId, user, card, 'num2', cleanPhone);
+    if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+    await sendSearchResult(chatId, user, card, 'num2', cleanPhone, userMsgId);
     return;
   }
 
@@ -2910,14 +3211,24 @@ You have used up your free daily search allowance.
     if (!query) {
       user.pendingAction = 'voter';
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, getPromptCard('voter'), getPromptInlineKeyboard('voter'));
+      const promptId = await sendTelegramMessage(chatId, getPromptCard('voter'), getPromptInlineKeyboard('voter'));
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, promptId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
+    const btnCheck = checkAndEnforceButtonLimit(user, 'voter');
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
       return;
     }
     await sendTelegramChatAction(chatId, "typing");
+    const statusId = await sendTelegramMessage(chatId, `🔍 *Searching Electoral Rolls...*\nEPIC: \`${query}\`...`);
     const data = await fetchWithTimeout(`${VOTER_API_URL}${query}`);
     recordSearch(userId);
+    recordButtonUsage(user, 'voter');
     const card = formatVoterCard(data, query);
-    await sendSearchResult(chatId, user, card, 'voter', query);
+    if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+    await sendSearchResult(chatId, user, card, 'voter', query, userMsgId);
     return;
   }
 
@@ -2926,14 +3237,24 @@ You have used up your free daily search allowance.
     if (!query) {
       user.pendingAction = 'aadhar2info';
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, getPromptCard('aadhar2info'), getPromptInlineKeyboard('aadhar2info'));
+      const promptId = await sendTelegramMessage(chatId, getPromptCard('aadhar2info'), getPromptInlineKeyboard('aadhar2info'));
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, promptId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
+    const btnCheck = checkAndEnforceButtonLimit(user, 'aadhar2info');
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
       return;
     }
     await sendTelegramChatAction(chatId, "typing");
+    const statusId = await sendTelegramMessage(chatId, `🔍 *Verifying UIDAI Records...*\nTarget: \`${query.slice(0, 4)} **** ${query.slice(8)}\`...`);
     const data = await fetchWithTimeout(`${AADHAR2_API_URL}${query}`);
     recordSearch(userId);
+    recordButtonUsage(user, 'aadhar2info');
     const card = formatAadharCard(data, query, false);
-    await sendSearchResult(chatId, user, card, 'aadhar2info', query);
+    if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+    await sendSearchResult(chatId, user, card, 'aadhar2info', query, userMsgId);
     return;
   }
 
@@ -2942,14 +3263,24 @@ You have used up your free daily search allowance.
     if (!query) {
       user.pendingAction = 'aadhar2family';
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, getPromptCard('aadhar2family'), getPromptInlineKeyboard('aadhar2family'));
+      const promptId = await sendTelegramMessage(chatId, getPromptCard('aadhar2family'), getPromptInlineKeyboard('aadhar2family'));
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, promptId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
+    const btnCheck = checkAndEnforceButtonLimit(user, 'aadhar2family');
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
       return;
     }
     await sendTelegramChatAction(chatId, "typing");
+    const statusId = await sendTelegramMessage(chatId, `🔍 *Extracting Family Tree Graph...*\nTarget: \`${query.slice(0, 4)} **** ${query.slice(8)}\`...`);
     const data = await fetchWithTimeout(`${AADHAR2FAM_API_URL}${query}`);
     recordSearch(userId);
+    recordButtonUsage(user, 'aadhar2family');
     const card = formatAadharCard(data, query, true);
-    await sendSearchResult(chatId, user, card, 'aadhar2family', query);
+    if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+    await sendSearchResult(chatId, user, card, 'aadhar2family', query, userMsgId);
     return;
   }
 
@@ -2958,14 +3289,24 @@ You have used up your free daily search allowance.
     if (!query) {
       user.pendingAction = 'lpg';
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, getPromptCard('lpg'), getPromptInlineKeyboard('lpg'));
+      const promptId = await sendTelegramMessage(chatId, getPromptCard('lpg'), getPromptInlineKeyboard('lpg'));
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, promptId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
+    const btnCheck = checkAndEnforceButtonLimit(user, 'lpg');
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
       return;
     }
     await sendTelegramChatAction(chatId, "typing");
+    const statusId = await sendTelegramMessage(chatId, `🔍 *Querying MoPNG Gas Gateway...*\nTarget: \`${query}\`...`);
     const data = await fetchWithTimeout(`${LPG_API_URL}${query}`);
     recordSearch(userId);
+    recordButtonUsage(user, 'lpg');
     const card = formatLPGCard(data, query);
-    await sendSearchResult(chatId, user, card, 'lpg', query);
+    if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+    await sendSearchResult(chatId, user, card, 'lpg', query, userMsgId);
     return;
   }
 
@@ -2974,14 +3315,24 @@ You have used up your free daily search allowance.
     if (!query) {
       user.pendingAction = 'upi2num';
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, getPromptCard('upi2num'), getPromptInlineKeyboard('upi2num'));
+      const promptId = await sendTelegramMessage(chatId, getPromptCard('upi2num'), getPromptInlineKeyboard('upi2num'));
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, promptId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
+    const btnCheck = checkAndEnforceButtonLimit(user, 'upi2num');
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
       return;
     }
     await sendTelegramChatAction(chatId, "typing");
+    const statusId = await sendTelegramMessage(chatId, `🔍 *Resolving UPI VPA Handle...*\nTarget: \`${query}\`...`);
     const data = await fetchWithTimeout(`${UPI2NUM_API_URL}${encodeURIComponent(query)}`);
     recordSearch(userId);
+    recordButtonUsage(user, 'upi2num');
     const card = formatUPICard(data, query);
-    await sendSearchResult(chatId, user, card, 'upi2num', query);
+    if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+    await sendSearchResult(chatId, user, card, 'upi2num', query, userMsgId);
     return;
   }
 
@@ -2990,14 +3341,24 @@ You have used up your free daily search allowance.
     if (!query) {
       user.pendingAction = 'gst2name';
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, getPromptCard('gst2name'), getPromptInlineKeyboard('gst2name'));
+      const promptId = await sendTelegramMessage(chatId, getPromptCard('gst2name'), getPromptInlineKeyboard('gst2name'));
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, promptId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
+    const btnCheck = checkAndEnforceButtonLimit(user, 'gst2name');
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
       return;
     }
     await sendTelegramChatAction(chatId, "typing");
+    const statusId = await sendTelegramMessage(chatId, `🔍 *Searching GST By Business Name...*\nTarget: \`${query}\`...`);
     const data = await fetchWithTimeout(`${GST2NAME_API_URL}${encodeURIComponent(query)}`);
     recordSearch(userId);
+    recordButtonUsage(user, 'gst2name');
     const card = formatGSTCard(data, query, 'name');
-    await sendSearchResult(chatId, user, card, 'gst2name', query);
+    if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+    await sendSearchResult(chatId, user, card, 'gst2name', query, userMsgId);
     return;
   }
 
@@ -3006,14 +3367,24 @@ You have used up your free daily search allowance.
     if (!query) {
       user.pendingAction = 'gst2pan';
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, getPromptCard('gst2pan'), getPromptInlineKeyboard('gst2pan'));
+      const promptId = await sendTelegramMessage(chatId, getPromptCard('gst2pan'), getPromptInlineKeyboard('gst2pan'));
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, promptId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
+    const btnCheck = checkAndEnforceButtonLimit(user, 'gst2pan');
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
       return;
     }
     await sendTelegramChatAction(chatId, "typing");
+    const statusId = await sendTelegramMessage(chatId, `🔍 *Resolving GSTIN By PAN...*\nPAN: \`${query}\`...`);
     const data = await fetchWithTimeout(`${GST2PAN_API_URL}${query}`);
     recordSearch(userId);
+    recordButtonUsage(user, 'gst2pan');
     const card = formatGSTCard(data, query, 'pan');
-    await sendSearchResult(chatId, user, card, 'gst2pan', query);
+    if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+    await sendSearchResult(chatId, user, card, 'gst2pan', query, userMsgId);
     return;
   }
 
@@ -3022,57 +3393,81 @@ You have used up your free daily search allowance.
     if (!query) {
       user.pendingAction = 'gst';
       await sendTelegramChatAction(chatId, "typing");
-      await sendTelegramMessage(chatId, getPromptCard('gst'), getPromptInlineKeyboard('gst'));
+      const promptId = await sendTelegramMessage(chatId, getPromptCard('gst'), getPromptInlineKeyboard('gst'));
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, promptId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
+    const btnCheck = checkAndEnforceButtonLimit(user, 'gst');
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
       return;
     }
     await sendTelegramChatAction(chatId, "typing");
+    const statusId = await sendTelegramMessage(chatId, `🔍 *Retrieving GSTIN Profile...*\nGSTIN: \`${query}\`...`);
     const data = await fetchWithTimeout(`${GST_API_URL}${query}`);
     recordSearch(userId);
+    recordButtonUsage(user, 'gst');
     const card = formatGSTCard(data, query, 'gst');
-    await sendSearchResult(chatId, user, card, 'gst', query);
+    if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
+    await sendSearchResult(chatId, user, card, 'gst', query, userMsgId);
     return;
   }
 
   // ── SMART AUTO-DETECTION FOR RAW INPUTS IN TELEGRAM ──
   const detected = autoDetectLookupType(text);
   if (detected) {
+    const btnCheck = checkAndEnforceButtonLimit(user, detected.type);
+    if (!btnCheck.allowed) {
+      const sentId = await sendTelegramMessage(chatId, btnCheck.message);
+      if (isGroup) scheduleAutoDelete(chatId, [userMsgId, sentId], AUTO_DELETE_DELAY_MS);
+      return;
+    }
     await sendTelegramChatAction(chatId, "typing");
     let data: any = null;
     let card = "";
 
     if (detected.type === 'num2') {
-      await sendTelegramMessage(chatId, `🔍 *Querying Telecom Registry...*\nTarget: \`+91 ${detected.cleanQuery}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Querying Telecom Registry...*\nTarget: \`+91 ${detected.cleanQuery}\`...`);
       data = await fetchWithTimeout(`${NUM2_API_URL}${detected.cleanQuery}`);
       card = formatNum2Card(data, detected.cleanQuery);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
     } else if (detected.type === 'vehicle') {
-      await sendTelegramMessage(chatId, `🔍 *Querying Vahan RC Gateway...*\nTarget: \`${detected.cleanQuery}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Querying Vahan RC Gateway...*\nTarget: \`${detected.cleanQuery}\`...`);
       data = await fetchVehicleInfo(detected.cleanQuery);
       card = formatVehicleCard(data, detected.cleanQuery);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
     } else if (detected.type === 'voter') {
-      await sendTelegramMessage(chatId, `🔍 *Searching Electoral Rolls...*\nEPIC: \`${detected.cleanQuery}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Searching Electoral Rolls...*\nEPIC: \`${detected.cleanQuery}\`...`);
       data = await fetchWithTimeout(`${VOTER_API_URL}${detected.cleanQuery}`);
       card = formatVoterCard(data, detected.cleanQuery);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
     } else if (detected.type === 'aadhar2info') {
-      await sendTelegramMessage(chatId, `🔍 *Verifying UIDAI Records...*\nTarget: \`${detected.cleanQuery.slice(0, 4)} **** ${detected.cleanQuery.slice(8)}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Verifying UIDAI Records...*\nTarget: \`${detected.cleanQuery.slice(0, 4)} **** ${detected.cleanQuery.slice(8)}\`...`);
       data = await fetchWithTimeout(`${AADHAR2_API_URL}${detected.cleanQuery}`);
       card = formatAadharCard(data, detected.cleanQuery, false);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
     } else if (detected.type === 'gst2pan') {
-      await sendTelegramMessage(chatId, `🔍 *Resolving GSTIN By PAN...*\nPAN: \`${detected.cleanQuery}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Resolving GSTIN By PAN...*\nPAN: \`${detected.cleanQuery}\`...`);
       data = await fetchWithTimeout(`${GST2PAN_API_URL}${detected.cleanQuery}`);
       card = formatGSTCard(data, detected.cleanQuery, 'pan');
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
     } else if (detected.type === 'gst') {
-      await sendTelegramMessage(chatId, `🔍 *Retrieving GSTIN Profile...*\nGSTIN: \`${detected.cleanQuery}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Retrieving GSTIN Profile...*\nGSTIN: \`${detected.cleanQuery}\`...`);
       data = await fetchWithTimeout(`${GST_API_URL}${detected.cleanQuery}`);
       card = formatGSTCard(data, detected.cleanQuery, 'gst');
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
     } else if (detected.type === 'upi2num') {
-      await sendTelegramMessage(chatId, `🔍 *Resolving UPI VPA Handle...*\nTarget: \`${detected.cleanQuery}\`...`);
+      const statusId = await sendTelegramMessage(chatId, `🔍 *Resolving UPI VPA Handle...*\nTarget: \`${detected.cleanQuery}\`...`);
       data = await fetchWithTimeout(`${UPI2NUM_API_URL}${encodeURIComponent(detected.cleanQuery)}`);
       card = formatUPICard(data, detected.cleanQuery);
+      if (isGroup && statusId) deleteTelegramMessage(chatId, statusId).catch(() => {});
     }
 
     if (card) {
       recordSearch(userId);
-      await sendSearchResult(chatId, user, card, detected.type, detected.cleanQuery);
+      recordButtonUsage(user, detected.type);
+      await sendSearchResult(chatId, user, card, detected.type, detected.cleanQuery, userMsgId);
       return;
     }
   }
@@ -3294,9 +3689,9 @@ async function startServer() {
     res.json({ success: true, button: btn, message: `Button ${btn.label} is now ${btn.enabled ? 'ENABLED' : 'DISABLED'}` });
   });
 
-  // POST /api/admin/buttons/update - update API URL, label, etc.
+  // POST /api/admin/buttons/update - update API URL, label, daily limit, etc.
   app.post('/api/admin/buttons/update', async (req, res) => {
-    const { id, apiUrl, label, category, placeholder, example, description, enabled } = req.body;
+    const { id, apiUrl, label, category, placeholder, example, description, enabled, dailyLimit } = req.body;
     if (!id) {
       return res.status(400).json({ success: false, error: 'Button ID is required' });
     }
@@ -3312,6 +3707,10 @@ async function startServer() {
     if (example !== undefined) btn.example = String(example).trim();
     if (description !== undefined) btn.description = String(description).trim();
     if (enabled !== undefined) btn.enabled = Boolean(enabled);
+    if (dailyLimit !== undefined) {
+      const parsedLim = Number(dailyLimit);
+      btn.dailyLimit = isNaN(parsedLim) || parsedLim < 0 ? 0 : parsedLim;
+    }
 
     await persistButton(btn);
     res.json({ success: true, button: btn, message: `Button ${btn.label} configuration updated successfully.` });
@@ -3319,11 +3718,13 @@ async function startServer() {
 
   // POST /api/admin/buttons/add - add a brand new button + custom API
   app.post('/api/admin/buttons/add', async (req, res) => {
-    const { id, label, apiUrl, category = 'custom', placeholder = '', example = '', description = '' } = req.body;
+    const { id, label, apiUrl, category = 'custom', placeholder = '', example = '', description = '', dailyLimit = 0 } = req.body;
     if (!label || !apiUrl) {
       return res.status(400).json({ success: false, error: 'Label and API URL are required' });
     }
 
+    const parsedLim = Number(dailyLimit);
+    const validLimit = isNaN(parsedLim) || parsedLim < 0 ? 0 : parsedLim;
     const generatedId = (id || label.toLowerCase().replace(/[^a-z0-9]/g, '_')).trim() || `btn_${Date.now()}`;
     const newBtn: BotButton = {
       id: generatedId,
@@ -3336,6 +3737,7 @@ async function startServer() {
       enabled: true,
       isCustom: true,
       sortOrder: buttonsStore.size + 1,
+      dailyLimit: validLimit,
     };
 
     buttonsStore.set(generatedId, newBtn);
@@ -3353,6 +3755,88 @@ async function startServer() {
     buttonsStore.delete(id);
     await deleteButtonFromDb(id);
     res.json({ success: true, message: `Button ${btn.label} deleted successfully.` });
+  });
+
+  // ── USER MANAGEMENT & DM ACCESS ADMIN ENDPOINTS ──
+  // GET /api/admin/users - return list of all users and permissions
+  app.get('/api/admin/users', (req, res) => {
+    const users = Array.from(usersStore.values()).map(u => ({
+      userId: u.userId,
+      role: u.role,
+      dailySearches: u.dailySearches,
+      dailyLimit: getUserDailyLimit(u),
+      totalSearches: u.totalSearches,
+      channelVerified: u.channelVerified,
+      referralCount: u.referralCount || 0,
+      referralBonusDaily: u.referralBonusDaily || 0,
+      allowDm: Boolean(u.allowDm || u.role === 'admin'),
+      dailyButtonUsage: u.dailyButtonUsage || {},
+    }));
+    res.json({ success: true, users });
+  });
+
+  // POST /api/admin/users/allow-dm - toggle user DM access
+  app.post('/api/admin/users/allow-dm', async (req, res) => {
+    const { userId, allowDm } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required' });
+    }
+    const user = getUser(userId);
+    user.allowDm = Boolean(allowDm);
+    await persistUser(user);
+    res.json({
+      success: true,
+      user: {
+        userId: user.userId,
+        role: user.role,
+        allowDm: user.allowDm,
+      },
+      message: `User ${userId} DM access set to ${user.allowDm ? 'ALLOWED' : 'DISABLED'}`
+    });
+  });
+
+  // POST /api/admin/users/role - set user role (admin, premium, free)
+  app.post('/api/admin/users/role', async (req, res) => {
+    const { userId, role } = req.body;
+    if (!userId || !role) {
+      return res.status(400).json({ success: false, error: 'User ID and role are required' });
+    }
+    const user = getUser(userId);
+    user.role = role;
+    if (role === 'admin') {
+      user.allowDm = true;
+    }
+    await persistUser(user);
+    res.json({
+      success: true,
+      user: {
+        userId: user.userId,
+        role: user.role,
+        allowDm: user.allowDm,
+      },
+      message: `User ${userId} role updated to ${user.role}`
+    });
+  });
+
+  // POST /api/admin/users/add - register/whitelist a Telegram User ID for DM or Admin
+  app.post('/api/admin/users/add', async (req, res) => {
+    const { userId, role = 'free', allowDm = false } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required' });
+    }
+    const user = getUser(userId);
+    user.role = role;
+    user.allowDm = Boolean(allowDm || role === 'admin');
+    await persistUser(user);
+    res.json({
+      success: true,
+      user: {
+        userId: user.userId,
+        role: user.role,
+        allowDm: user.allowDm,
+      },
+      message: `User ${userId} configured successfully!`
+    });
   });
 
   // OSINT Lookup Router
