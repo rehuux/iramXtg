@@ -631,6 +631,14 @@ const telegramChatIds = new Set<string | number>();
 async function sendTelegramMessage(chatId: number | string, text: string, replyMarkup?: any): Promise<number | null> {
   if (chatId) telegramChatIds.add(chatId);
   if (!BOT_TOKEN) return null;
+
+  // If text is larger than Telegram message limit (3800 chars), automatically send as .txt document
+  if (text.length > 3800) {
+    const filename = `lookup_result_${Date.now()}.txt`;
+    const caption = `📄 *Result is large — Full output attached in .txt file.*`;
+    return await sendTelegramDocument(chatId, filename, text, caption, replyMarkup);
+  }
+
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
@@ -662,8 +670,69 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
         return plainData.result.message_id;
       }
     }
+    // Fallback if message too long according to Telegram
+    if (!data.ok && data.description?.toLowerCase().includes('too long')) {
+      const filename = `lookup_result_${Date.now()}.txt`;
+      const caption = `📄 *Result is large — Full output attached in .txt file.*`;
+      return await sendTelegramDocument(chatId, filename, text, caption, replyMarkup);
+    }
   } catch (err: any) {
     console.error("Telegram send error:", err.message);
+  }
+  return null;
+}
+
+async function sendTelegramDocument(
+  chatId: number | string,
+  filename: string,
+  content: string,
+  caption?: string,
+  replyMarkup?: any
+): Promise<number | null> {
+  if (chatId) telegramChatIds.add(chatId);
+  if (!BOT_TOKEN) return null;
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', String(chatId));
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    formData.append('document', blob, filename);
+    if (caption) {
+      formData.append('caption', caption.slice(0, 1024));
+      formData.append('parse_mode', 'Markdown');
+    }
+    if (replyMarkup) {
+      formData.append('reply_markup', JSON.stringify(replyMarkup));
+    }
+
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (data.ok && data.result?.message_id) {
+      return data.result.message_id;
+    }
+    // Fallback if markdown in caption fails
+    if (!data.ok && caption && data.description?.includes('entity')) {
+      const plainFormData = new FormData();
+      plainFormData.append('chat_id', String(chatId));
+      plainFormData.append('document', new Blob([content], { type: 'text/plain;charset=utf-8' }), filename);
+      plainFormData.append('caption', caption.replace(/[*_`[\]()]/g, '').slice(0, 1024));
+      if (replyMarkup) {
+        plainFormData.append('reply_markup', JSON.stringify(replyMarkup));
+      }
+      const plainRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
+        method: 'POST',
+        body: plainFormData,
+      });
+      const plainData = await plainRes.json();
+      if (plainData.ok && plainData.result?.message_id) {
+        return plainData.result.message_id;
+      }
+    }
+    console.error("sendTelegramDocument error response:", data);
+  } catch (err: any) {
+    console.error("Telegram sendDocument error:", err.message);
   }
   return null;
 }
@@ -1990,11 +2059,6 @@ function formatGenericCustomCard(label: string, data: any, query: string): strin
     }
   }
 
-  // Telegram max length safety: leave room for header & footer
-  if (jsonStr.length > 3400) {
-    jsonStr = jsonStr.slice(0, 3400) + "\n... [truncated for Telegram message size limit]";
-  }
-
   let formatted = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n┃   ${label.toUpperCase()}\n╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n`;
   formatted += `🎯 *Target:* \`${query}\`\n`;
   formatted += `⏱️ *Generated:* \`${new Date().toLocaleString('en-IN')}\`\n`;
@@ -2007,10 +2071,39 @@ function formatGenericCustomCard(label: string, data: any, query: string): strin
 async function sendSearchResult(chatId: number | string, user: UserRecord, card: string, type: string, query?: string, userMessageId?: number) {
   user.pendingAction = undefined;
   const isGroup = String(chatId).startsWith("-");
-  const resultMsgId = await sendTelegramMessage(chatId, card, getResultInlineKeyboard(type, query));
+  let resultMsgId: number | null = null;
+
+  // If response is large (over 3400 chars), send directly as a clean .txt file document
+  if (card.length > 3400) {
+    const cleanType = (type || 'lookup').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const cleanQuery = (query || 'result').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `${cleanType}_${cleanQuery}.txt`;
+
+    let fileContent = card;
+    const jsonMatch = card.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (jsonMatch && jsonMatch[1]) {
+      fileContent = jsonMatch[1].trim();
+    } else {
+      fileContent = card.replace(/\*/g, '');
+    }
+
+    const caption = `📄 *${(type || 'LOOKUP').toUpperCase()} RESULT*\n🎯 *Target:* \`${query || 'Query'}\`\n⏱️ *Generated:* \`${new Date().toLocaleString('en-IN')}\`\n\nℹ️ *Response size is large — full result attached as .txt file.*`;
+
+    resultMsgId = await sendTelegramDocument(chatId, filename, fileContent, caption, getResultInlineKeyboard(type, query));
+  } else {
+    resultMsgId = await sendTelegramMessage(chatId, card, getResultInlineKeyboard(type, query));
+    // If standard sending failed due to length, fallback to document
+    if (!resultMsgId && card.length > 2000) {
+      const cleanType = (type || 'lookup').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const cleanQuery = (query || 'result').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `${cleanType}_${cleanQuery}.txt`;
+      const caption = `📄 *${(type || 'LOOKUP').toUpperCase()} RESULT*\n🎯 *Target:* \`${query || 'Query'}\`\nℹ️ *Response attached in .txt file.*`;
+      resultMsgId = await sendTelegramDocument(chatId, filename, card, caption, getResultInlineKeyboard(type, query));
+    }
+  }
 
   if (isGroup) {
-    // Auto-delete both user's lookup query and bot's lookup response after 40 seconds
+    // Auto-delete both user's lookup query and bot's lookup response (.txt file or message) after 40 seconds
     scheduleAutoDelete(chatId, [userMessageId, resultMsgId], AUTO_DELETE_DELAY_MS);
   } else {
     await sendTelegramMessage(chatId, "⚡ Select next service below or send a query directly:", getMainReplyKeyboard(user));
