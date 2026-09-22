@@ -258,7 +258,7 @@ async function loadUsersFromSupabase(): Promise<void> {
           referralCount: Number(row.referral_count) || 0,
           referralBonusDaily: Number(row.referral_bonus_daily) || 0,
           referredUsers: [],
-          allowDm: Boolean(row.allow_dm),
+          allowDm: row.allow_dm !== false,
           lastActive: row.last_active || row.updated_at || undefined,
           createdAt: row.created_at || undefined,
         });
@@ -283,7 +283,7 @@ async function persistUser(user: UserRecord): Promise<void> {
       referred_by: user.referredBy || null,
       referral_count: user.referralCount || 0,
       referral_bonus_daily: user.referralBonusDaily || 0,
-      allow_dm: Boolean(user.allowDm),
+      allow_dm: user.allowDm !== false,
       updated_at: new Date().toISOString()
     };
     if (user.username) payload.username = user.username;
@@ -440,18 +440,23 @@ function getUser(userId: string | number): UserRecord {
       referralCount: 0,
       referralBonusDaily: 0,
       referredUsers: [],
-      allowDm: idStr === String(ADMIN_USER_ID),
+      allowDm: true,
       dailyButtonUsage: {},
       createdAt: new Date().toISOString(),
       lastActive: new Date().toISOString(),
     };
     usersStore.set(idStr, user);
     persistUser(user).catch(() => {});
-  } else if (user.lastSearchDate !== today) {
-    user.dailySearches = 0;
-    user.dailyButtonUsage = {};
-    user.lastSearchDate = today;
-    persistUser(user).catch(() => {});
+  } else {
+    if (user.allowDm === undefined) {
+      user.allowDm = true;
+    }
+    if (user.lastSearchDate !== today) {
+      user.dailySearches = 0;
+      user.dailyButtonUsage = {};
+      user.lastSearchDate = today;
+      persistUser(user).catch(() => {});
+    }
   }
   return user;
 }
@@ -1893,10 +1898,10 @@ async function handleTelegramCallbackQuery(cq: any) {
     persistUser(user).catch(() => {});
   }
   user.lastActive = new Date().toISOString();
-  const canUseDm = user.role === 'admin' || user.allowDm === true || String(userId) === String(ADMIN_USER_ID);
+  const isDmBlocked = user.allowDm === false && user.role !== 'admin' && String(userId) !== String(ADMIN_USER_ID);
 
-  if (isPrivate && !canUseDm && data !== "verify_membership" && data !== "check_join") {
-    await answerTelegramCallbackQuery(cqId, "🚫 Bot DM mein allowed nahi hai. Official group use karein!", true);
+  if (isPrivate && isDmBlocked && data !== "verify_membership" && data !== "check_join") {
+    await answerTelegramCallbackQuery(cqId, "🔒 Aapka DM access Admin dwara restrict kiya gaya hai. Official group use karein!", true);
     return;
   }
 
@@ -2753,14 +2758,15 @@ Your daily allowance has been permanently upgraded!`;
     }
   }
 
-  // ── DM USAGE RESTRICTION ──
-  // The bot only works in group chats. DM is disabled for everyone EXCEPT Admins and users granted allowDm via Admin Panel.
-  const canUseDm = user.role === 'admin' || user.allowDm === true || String(userId) === String(ADMIN_USER_ID);
-  if (isPrivate && !canUseDm) {
-    const dmBlockedMsg = `🚫 *Bot DM mein work nahi karta!*
+  // ── DM USAGE ──
+  // Normal users can use the bot in DM directly.
+  // DM is only restricted if an Admin has explicitly revoked/blocked DM for this user (allowDm === false).
+  const isDmBlocked = user.allowDm === false && user.role !== 'admin' && String(userId) !== String(ADMIN_USER_ID);
+  if (isPrivate && isDmBlocked) {
+    const dmBlockedMsg = `🔒 *Aapka DM access Admin dwara restrict kiya gaya hai.*
 
-Sabhi lookups hamare official group mein run karein:
-👥 *Group:* [lookupXchat](${OFFICIAL_GROUP_URL})`;
+Aap bot ko hamare official group mein use kar sakte hain:
+👉 [lookupXchat](${OFFICIAL_GROUP_URL})`;
     await sendTelegramMessage(chatId, dmBlockedMsg, {
       inline_keyboard: [
         [
@@ -4663,7 +4669,7 @@ async function startServer() {
       channelVerified: u.channelVerified,
       referralCount: u.referralCount || 0,
       referralBonusDaily: u.referralBonusDaily || 0,
-      allowDm: Boolean(u.allowDm || u.role === 'admin'),
+      allowDm: Boolean(u.allowDm !== false || u.role === 'admin'),
       lastActive: u.lastActive || '',
       createdAt: u.createdAt || '',
       dailyButtonUsage: (u.lastSearchDate === today && u.dailyButtonUsage) ? u.dailyButtonUsage : {},
@@ -4741,7 +4747,7 @@ async function startServer() {
       dump += `  Role: ${u.role.toUpperCase()}\n`;
       dump += `  Today Searches: ${todayUsed} / ${limit}\n`;
       dump += `  Total Searches: ${u.totalSearches || 0}\n`;
-      dump += `  DM Allowed: ${Boolean(u.allowDm || u.role === 'admin') ? 'YES' : 'NO'}\n`;
+      dump += `  DM Allowed: ${Boolean(u.allowDm !== false || u.role === 'admin') ? 'YES' : 'NO'}\n`;
       dump += `  Invited Friends: ${u.referralCount || 0}\n`;
       dump += `  Last Active: ${u.lastActive || 'N/A'}\n`;
       dump += `  Registered: ${u.createdAt || 'N/A'}\n`;
@@ -4796,15 +4802,15 @@ async function startServer() {
     });
   });
 
-  // POST /api/admin/users/add - register/whitelist a Telegram User ID for DM or Admin
+  // POST /api/admin/users/add - register a Telegram User ID
   app.post('/api/admin/users/add', async (req, res) => {
-    const { userId, role = 'free', allowDm = false } = req.body;
+    const { userId, role = 'free', allowDm = true } = req.body;
     if (!userId) {
       return res.status(400).json({ success: false, error: 'User ID is required' });
     }
     const user = getUser(userId);
     user.role = role;
-    user.allowDm = Boolean(allowDm || role === 'admin');
+    user.allowDm = Boolean(allowDm !== false || role === 'admin');
     await persistUser(user);
     res.json({
       success: true,
