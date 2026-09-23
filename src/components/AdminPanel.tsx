@@ -32,12 +32,20 @@ import {
   UserPlus,
   Shield,
   TestTube,
-  Settings2
+  Settings2,
+  Activity,
+  Filter,
+  Download,
+  Layers,
+  Zap,
+  SlidersHorizontal,
+  X
 } from 'lucide-react';
 import type { StatsData, BotConfig, RedeemCode, BotButton, BotUser } from '../types';
 import { AdminGate } from './admin/AdminGate';
 import { ApiTesterTab } from './admin/ApiTesterTab';
 import { SystemSettingsTab } from './admin/SystemSettingsTab';
+import { AuditLogsTab } from './admin/AuditLogsTab';
 
 interface AdminPanelProps {
   stats: StatsData;
@@ -53,7 +61,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
   });
 
   // Admin Navigation Sub-Tabs
-  const [activeSubTab, setActiveSubTab] = useState<'buttons' | 'playground' | 'users' | 'settings' | 'codes' | 'database'>('buttons');
+  const [activeSubTab, setActiveSubTab] = useState<'buttons' | 'playground' | 'users' | 'settings' | 'codes' | 'logs' | 'database'>('buttons');
+
+  // Confirmation Modal State (replaces blocked window.confirm)
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    confirmStyle?: 'danger' | 'warning' | 'primary';
+    onConfirm: () => void;
+  } | null>(null);
+
+  // Custom user limit editor state
+  const [editingCustomLimitUser, setEditingCustomLimitUser] = useState<BotUser | null>(null);
+  const [customLimitInput, setCustomLimitInput] = useState<number>(0);
+
+  // Button filtering & search state
+  const [buttonCategoryFilter, setButtonCategoryFilter] = useState<string>('all');
+  const [buttonSearchQuery, setButtonSearchQuery] = useState<string>('');
+
+  // Code filtering & broadcast target
+  const [codeFilter, setCodeFilter] = useState<'all' | 'active' | 'claimed'>('all');
+  const [broadcastTarget, setBroadcastTarget] = useState<'all' | 'vip' | 'free' | 'dm'>('all');
 
   const [codes, setCodes] = useState<RedeemCode[]>([]);
   const [loadingCodes, setLoadingCodes] = useState(false);
@@ -260,23 +290,79 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
     }
   };
 
-  const handleDeleteUser = async (userId: string) => {
-    if (!window.confirm(`Are you sure you want to remove User ${userId}?`)) return;
+  const handleDeleteUser = (userId: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Remove User Record',
+      message: `Are you sure you want to delete user ID ${userId}? Their daily quotas and settings will be permanently erased.`,
+      confirmLabel: 'Delete User',
+      confirmStyle: 'danger',
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          const res = await fetch('/api/admin/users/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId }),
+          });
+          const data = await res.json();
+          if (data.success) {
+            setUserActionMsg({ type: 'success', text: `User ${userId} deleted.` });
+            setUsers((prev) => prev.filter((u) => u.userId !== userId));
+          } else {
+            setUserActionMsg({ type: 'error', text: data.error || 'Failed to delete user.' });
+          }
+        } catch (e: any) {
+          setUserActionMsg({ type: 'error', text: e.message || 'Error deleting user.' });
+        }
+      },
+    });
+  };
+
+  const handleResetAllUsers = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Reset All Users Daily Searches',
+      message: 'Are you sure you want to reset today\'s search counters to 0 for ALL users? This grants everyone a fresh daily quota immediately.',
+      confirmLabel: 'Reset All Quotas',
+      confirmStyle: 'warning',
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          const res = await fetch('/api/admin/users/reset-all-daily', { method: 'POST' });
+          const data = await res.json();
+          if (data.success) {
+            setUserActionMsg({ type: 'success', text: data.message });
+            fetchUsers();
+          }
+        } catch (e: any) {
+          setUserActionMsg({ type: 'error', text: e.message || 'Error resetting users.' });
+        }
+      },
+    });
+  };
+
+  const handleSaveCustomLimit = async () => {
+    if (!editingCustomLimitUser) return;
     try {
-      const res = await fetch('/api/admin/users/delete', {
+      const res = await fetch('/api/admin/users/set-custom-limit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({
+          userId: editingCustomLimitUser.userId,
+          customLimit: customLimitInput,
+        }),
       });
       const data = await res.json();
       if (data.success) {
-        setUserActionMsg({ type: 'success', text: `User ${userId} deleted.` });
-        setUsers((prev) => prev.filter((u) => u.userId !== userId));
+        setUserActionMsg({ type: 'success', text: data.message });
+        setEditingCustomLimitUser(null);
+        fetchUsers();
       } else {
-        setUserActionMsg({ type: 'error', text: data.error || 'Failed to delete user.' });
+        setUserActionMsg({ type: 'error', text: data.error || 'Failed to set limit' });
       }
     } catch (e: any) {
-      setUserActionMsg({ type: 'error', text: e.message || 'Error deleting user.' });
+      setUserActionMsg({ type: 'error', text: e.message || 'Error setting custom limit.' });
     }
   };
 
@@ -404,22 +490,74 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
     }
   };
 
-  const handleDeleteButton = async (btn: BotButton) => {
-    if (!confirm(`Are you sure you want to delete "${btn.label}"? This will remove it from bot and web.`)) return;
+  const handleDeleteButton = (btn: BotButton) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Custom Service Button',
+      message: `Are you sure you want to delete "${btn.label}"? This will remove it from both the Telegram bot and the Web UI.`,
+      confirmLabel: 'Delete Button',
+      confirmStyle: 'danger',
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          const res = await fetch(`/api/admin/buttons/${btn.id}`, { method: 'DELETE' });
+          const data = await res.json();
+          if (data.success) {
+            setButtons((prev) => prev.filter((b) => b.id !== btn.id));
+            setButtonActionMsg({ type: 'success', text: `Button "${btn.label}" deleted.` });
+            if (onButtonsUpdated) onButtonsUpdated();
+          } else {
+            setButtonActionMsg({ type: 'error', text: data.error || 'Failed to delete.' });
+          }
+        } catch (e: any) {
+          setButtonActionMsg({ type: 'error', text: e.message || 'Error deleting button.' });
+        }
+      },
+    });
+  };
 
-    try {
-      const res = await fetch(`/api/admin/buttons/${btn.id}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (data.success) {
-        setButtons((prev) => prev.filter((b) => b.id !== btn.id));
-        setButtonActionMsg({ type: 'success', text: `Button "${btn.label}" deleted.` });
-        if (onButtonsUpdated) onButtonsUpdated();
-      } else {
-        setButtonActionMsg({ type: 'error', text: data.error || 'Failed to delete.' });
-      }
-    } catch (e: any) {
-      setButtonActionMsg({ type: 'error', text: e.message || 'Error deleting button.' });
-    }
+  const handleDeleteCode = (code: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Revoke Redeem Voucher',
+      message: `Are you sure you want to revoke and delete code "${code}"? Users will no longer be able to claim it.`,
+      confirmLabel: 'Revoke Code',
+      confirmStyle: 'danger',
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          const res = await fetch(`/api/admin/codes/${encodeURIComponent(code)}`, { method: 'DELETE' });
+          const data = await res.json();
+          if (data.success) {
+            setCodes((prev) => prev.filter((c) => c.code !== code));
+          }
+        } catch (e) {
+          console.warn('Failed to delete code', e);
+        }
+      },
+    });
+  };
+
+  const handlePurgeClaimedCodes = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Purge Exhausted Codes',
+      message: 'Are you sure you want to remove all fully claimed or exhausted voucher codes?',
+      confirmLabel: 'Purge Codes',
+      confirmStyle: 'warning',
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          const res = await fetch('/api/admin/codes/purge-claimed', { method: 'POST' });
+          const data = await res.json();
+          if (data.success) {
+            fetchCodes();
+          }
+        } catch (e) {
+          console.warn('Failed to purge codes', e);
+        }
+      },
+    });
   };
 
   const sqlCode = `-- SQL Commands to create bot_buttons & bot_users tables in Supabase
@@ -551,7 +689,10 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
       const res = await fetch('/api/admin/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: announcementMsg.trim() }),
+        body: JSON.stringify({ 
+          message: announcementMsg.trim(),
+          target: broadcastTarget
+        }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -563,6 +704,14 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
     } finally {
       setSendingAnnouncement(false);
     }
+  };
+
+  const handleCopyAllActiveCodes = () => {
+    const active = codes.filter(c => c.usesLeft > 0).map(c => c.code).join('\n');
+    if (!active) return;
+    navigator.clipboard.writeText(active);
+    setCopiedCode('ALL_ACTIVE');
+    setTimeout(() => setCopiedCode(null), 2500);
   };
 
   const copyToClipboard = (text: string) => {
@@ -736,6 +885,20 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
         >
           <Key className="w-3.5 h-3.5" />
           <span>Redeem Codes & Broadcast</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('logs')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+            activeSubTab === 'logs'
+              ? 'bg-rose-600 text-white font-bold shadow-md shadow-rose-600/20'
+              : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800'
+          }`}
+        >
+          <Activity className="w-3.5 h-3.5 text-rose-400" />
+          <span>Live Logs & Queries</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
         </button>
 
         <button
@@ -918,6 +1081,77 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
           </div>
         </div>
 
+        {/* Codes Filter & Batch Actions Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setCodeFilter('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                codeFilter === 'all'
+                  ? 'bg-purple-600 text-white shadow'
+                  : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+              }`}
+            >
+              All Codes ({codes.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setCodeFilter('active')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                codeFilter === 'active'
+                  ? 'bg-emerald-600 text-white shadow'
+                  : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+              }`}
+            >
+              🟢 Active ({codes.filter(c => c.usesLeft > 0).length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setCodeFilter('claimed')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                codeFilter === 'claimed'
+                  ? 'bg-rose-600 text-white shadow'
+                  : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+              }`}
+            >
+              🔴 Claimed ({codes.filter(c => c.usesLeft === 0).length})
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCopyAllActiveCodes}
+              disabled={codes.filter(c => c.usesLeft > 0).length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 border border-slate-700 text-xs font-medium transition cursor-pointer"
+            >
+              {copiedCode === 'ALL_ACTIVE' ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-400 font-bold">Copied All!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Copy All Active</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePurgeClaimedCodes}
+              disabled={codes.filter(c => c.usesLeft === 0).length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-40 text-rose-300 border border-rose-500/30 text-xs font-medium transition cursor-pointer"
+              title="Remove exhausted/claimed codes"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Purge Claimed</span>
+            </button>
+          </div>
+        </div>
+
         {/* Codes Registry Table */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -928,18 +1162,28 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                 <th className="py-2.5 px-3">Validity</th>
                 <th className="py-2.5 px-3">Status</th>
                 <th className="py-2.5 px-3">Claimed By</th>
-                <th className="py-2.5 px-3 text-right">Copy</th>
+                <th className="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {codes.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="text-center py-6 text-slate-500">
-                    {loadingCodes ? 'Loading vouchers...' : 'No codes in database. Generate one using the form above.'}
-                  </td>
-                </tr>
-              ) : (
-                codes.map((c) => (
+              {(() => {
+                const filteredCodes = codes.filter((c) => {
+                  if (codeFilter === 'active') return c.usesLeft > 0;
+                  if (codeFilter === 'claimed') return c.usesLeft === 0;
+                  return true;
+                });
+
+                if (filteredCodes.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={6} className="text-center py-6 text-slate-500">
+                        {loadingCodes ? 'Loading vouchers...' : 'No codes matching the active filter. Generate one above.'}
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return filteredCodes.map((c) => (
                   <tr key={c.code} className="hover:bg-slate-800/40 transition">
                     <td className="py-2.5 px-3 font-mono font-bold text-cyan-300">
                       {c.code}
@@ -965,35 +1209,94 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                       {c.usedBy && c.usedBy.length > 0 ? c.usedBy.join(', ') : '—'}
                     </td>
                     <td className="py-2.5 px-3 text-right">
-                      <button
-                        onClick={() => copyToClipboard(c.code)}
-                        className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
-                        title="Copy code"
-                      >
-                        {copiedCode === c.code ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => copyToClipboard(c.code)}
+                          className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
+                          title="Copy code"
+                        >
+                          {copiedCode === c.code ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCode(c.code)}
+                          className="p-1 rounded bg-rose-900/20 hover:bg-rose-900/40 text-rose-400 hover:text-rose-300 border border-rose-800/40 transition cursor-pointer"
+                          title="Revoke / Delete Code"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
-                ))
-              )}
+                ));
+              })()}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Section 3: Broadcast Text Announcement */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-        <h4 className="text-sm font-semibold text-white flex items-center gap-2 mb-2">
-          <Send className="w-4 h-4 text-emerald-400" />
-          <span>Broadcast Official Message to All Users</span>
-        </h4>
-        <p className="text-xs text-slate-400 mb-4">
-          Send announcements, updates, or maintenance notices directly to all registered Telegram bot users.
-        </p>
+      {/* Section 3: Targeted Broadcast Announcement */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+              <Send className="w-4 h-4 text-emerald-400" />
+              <span>Broadcast Official Announcement</span>
+            </h4>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Send segmented announcements, updates, or maintenance notices directly to Telegram users.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400 font-medium">Audience:</span>
+            <select
+              value={broadcastTarget}
+              onChange={(e) => setBroadcastTarget(e.target.value as any)}
+              className="bg-slate-950 border border-slate-700 text-white text-xs px-3 py-1.5 rounded-xl focus:border-emerald-500 focus:outline-none cursor-pointer"
+            >
+              <option value="all">📢 All Registered Users ({users.length})</option>
+              <option value="vip">💎 VIP Members Only ({users.filter(u => u.role === 'premium').length})</option>
+              <option value="free">👤 Free Tier Only ({users.filter(u => u.role === 'free').length})</option>
+              <option value="dm">💬 DM Whitelisted Users ({users.filter(u => u.allowDm || u.role === 'admin').length})</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Quick Announcement Templates */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-slate-500 font-medium">Templates:</span>
+          {[
+            {
+              name: '🛠️ Maintenance',
+              msg: '⚠️ SCHEDULED MAINTENANCE NOTICE\n\nBot services will undergo brief performance upgrades for approximately 15 minutes. Searches may be slightly delayed. Normal operations will resume shortly!',
+            },
+            {
+              name: '🚀 New Services',
+              msg: '🔥 EXCITING UPDATE!\n\nNew registry search APIs and lookup features are now live in the bot! You can now query faster and get instant results. Try them now!',
+            },
+            {
+              name: '🎁 Bonus Quota',
+              msg: '🎉 SPECIAL BONUS ACTIVE!\n\nAll active users have received +10 bonus lookup searches for today! Check your balance anytime with /stats.',
+            },
+            {
+              name: '👥 Join Group',
+              msg: `📢 JOIN OFFICIAL COMMUNITY\n\nGet fastest lookup results, 24/7 support, and daily VIP code drops in our official group:\n👉 ${config.channelLink || 'https://t.me/lookupXchat'}`,
+            },
+          ].map((tpl) => (
+            <button
+              key={tpl.name}
+              type="button"
+              onClick={() => setAnnouncementMsg(tpl.msg)}
+              className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 text-[11px] transition cursor-pointer"
+            >
+              {tpl.name}
+            </button>
+          ))}
+        </div>
 
         <form onSubmit={handleBroadcastAnnouncement} className="space-y-3">
           <textarea
@@ -1001,7 +1304,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
             rows={3}
             value={announcementMsg}
             onChange={(e) => setAnnouncementMsg(e.target.value)}
-            placeholder="Type your official announcement here..."
+            placeholder="Type your official announcement here (supports markdown and emojis)..."
             className="w-full bg-slate-950 text-white text-xs px-3.5 py-2.5 rounded-xl border border-slate-800 focus:border-emerald-500 focus:outline-none"
           />
 
@@ -1009,7 +1312,9 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
             {announcementSuccess ? (
               <span className="text-xs text-emerald-400 font-medium">{announcementSuccess}</span>
             ) : (
-              <span className="text-[11px] text-slate-500">Supports markdown and emoji.</span>
+              <span className="text-[11px] text-slate-500">
+                Target: <strong className="text-emerald-400 uppercase">{broadcastTarget}</strong> audience.
+              </span>
             )}
 
             <button
@@ -1019,7 +1324,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white text-xs font-semibold transition cursor-pointer"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>{sendingAnnouncement ? 'Sending...' : 'Broadcast Message'}</span>
+              <span>{sendingAnnouncement ? 'Broadcasting...' : `Broadcast to ${broadcastTarget.toUpperCase()}`}</span>
             </button>
           </div>
         </form>
@@ -1203,6 +1508,46 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
           </form>
         )}
 
+        {/* Search & Category Filter Toolbar */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+          <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
+            {['all', 'vehicles', 'identity', 'telecom', 'business', 'custom'].map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setButtonCategoryFilter(cat)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold capitalize transition ${
+                  buttonCategoryFilter === cat
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                }`}
+              >
+                {cat === 'all' ? `All (${buttons.length})` : cat}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative w-full sm:w-64">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={buttonSearchQuery}
+              onChange={(e) => setButtonSearchQuery(e.target.value)}
+              placeholder="Filter buttons or API..."
+              className="w-full bg-slate-950 border border-slate-800 text-white text-xs pl-8 pr-3 py-1.5 rounded-xl focus:border-indigo-500 focus:outline-none"
+            />
+            {buttonSearchQuery && (
+              <button
+                type="button"
+                onClick={() => setButtonSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Buttons List Table */}
         <div className="overflow-x-auto">
           {loadingButtons ? (
@@ -1211,159 +1556,197 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
             <div className="py-8 text-center text-xs text-slate-400">No buttons found. Click "Refresh All".</div>
           ) : (
             <div className="space-y-2">
-              {buttons.map((btn) => {
-                const isEditing = editingButtonId === btn.id;
-                return (
-                  <div
-                    key={btn.id}
-                    className={`p-3.5 rounded-xl border transition flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
-                      btn.enabled
-                        ? 'bg-slate-950/70 border-slate-800/80 hover:border-slate-700'
-                        : 'bg-slate-950/30 border-rose-900/30 opacity-75'
-                    }`}
-                  >
-                    <div className="flex-1 space-y-1 w-full md:w-auto">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-white">{btn.label}</span>
-                        <span className="text-[10px] px-2 py-0.2 rounded-full bg-slate-800 text-slate-400 font-mono">
-                          id: {btn.id}
-                        </span>
-                        <span
-                          className={`text-[10px] px-2 py-0.2 rounded-full font-semibold ${
-                            btn.enabled
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                              : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          }`}
-                        >
-                          {btn.enabled ? '● ACTIVE' : '○ DISABLED (OFF)'}
-                        </span>
-                        <span className="text-[10px] px-2 py-0.2 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-medium">
-                          🎯 Limit: {btn.dailyLimit && btn.dailyLimit > 0 ? `${btn.dailyLimit}/day` : 'No Limit'}
-                        </span>
-                        {btn.isCustom && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                            Custom
+              {(() => {
+                const filteredButtons = buttons.filter((b) => {
+                  if (buttonCategoryFilter !== 'all' && (b.category || 'custom') !== buttonCategoryFilter) {
+                    return false;
+                  }
+                  if (buttonSearchQuery.trim()) {
+                    const q = buttonSearchQuery.toLowerCase();
+                    const matchLabel = b.label.toLowerCase().includes(q);
+                    const matchUrl = b.apiUrl ? b.apiUrl.toLowerCase().includes(q) : false;
+                    const matchId = b.id.toLowerCase().includes(q);
+                    return matchLabel || matchUrl || matchId;
+                  }
+                  return true;
+                });
+
+                if (filteredButtons.length === 0) {
+                  return (
+                    <div className="py-8 text-center text-xs text-slate-500">
+                      No buttons matched "{buttonSearchQuery}" in {buttonCategoryFilter}.
+                    </div>
+                  );
+                }
+
+                return filteredButtons.map((btn) => {
+                  const isEditing = editingButtonId === btn.id;
+                  return (
+                    <div
+                      key={btn.id}
+                      className={`p-3.5 rounded-xl border transition flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
+                        btn.enabled
+                          ? 'bg-slate-950/70 border-slate-800/80 hover:border-slate-700'
+                          : 'bg-slate-950/30 border-rose-900/30 opacity-75'
+                      }`}
+                    >
+                      <div className="flex-1 space-y-1 w-full md:w-auto">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-white">{btn.label}</span>
+                          <span className="text-[10px] px-2 py-0.2 rounded-full bg-slate-800 text-slate-400 font-mono">
+                            id: {btn.id}
                           </span>
+                          <span
+                            className={`text-[10px] px-2 py-0.2 rounded-full font-semibold ${
+                              btn.enabled
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            }`}
+                          >
+                            {btn.enabled ? '● ACTIVE' : '○ DISABLED (OFF)'}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.2 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-medium">
+                            🎯 Limit: {btn.dailyLimit && btn.dailyLimit > 0 ? `${btn.dailyLimit}/day` : 'No Limit'}
+                          </span>
+                          {btn.category && (
+                            <span className="text-[10px] px-2 py-0.2 rounded-full bg-slate-800 text-slate-300 border border-slate-700 capitalize font-mono">
+                              {btn.category}
+                            </span>
+                          )}
+                          {btn.isCustom && (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                              Custom
+                            </span>
+                          )}
+                        </div>
+
+                        {isEditing ? (
+                          <div className="space-y-2 pt-2 bg-slate-900/80 p-3 rounded-xl border border-indigo-500/40">
+                            <div className="text-[11px] font-semibold text-indigo-300 flex items-center gap-1.5">
+                              <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
+                              <span>Rename Button & Configure API</span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] text-slate-300 font-medium block">
+                                  Button Name / Label:
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editLabel}
+                                  onChange={(e) => setEditLabel(e.target.value)}
+                                  placeholder="e.g. 📱 Mobile Lookup 2.0"
+                                  className="w-full bg-slate-950 text-white font-medium text-xs px-2.5 py-1.5 rounded border border-indigo-500 focus:outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-slate-300 font-medium block">Search Input Placeholder:</label>
+                                <input
+                                  type="text"
+                                  value={editPlaceholder}
+                                  onChange={(e) => setEditPlaceholder(e.target.value)}
+                                  placeholder="e.g. Enter 10-digit mobile number"
+                                  className="w-full bg-slate-950 text-white text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
+                                />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <div className="sm:col-span-2">
+                                <label className="text-[10px] text-slate-300 font-medium block">API Endpoint URL:</label>
+                                <input
+                                  type="url"
+                                  value={editApiUrl}
+                                  onChange={(e) => setEditApiUrl(e.target.value)}
+                                  placeholder="https://api.example.com/search?query="
+                                  className="w-full bg-slate-950 text-white font-mono text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-slate-300 font-medium block">
+                                  Daily Limit Per User: <span className="text-slate-500">(0 = unlimited)</span>
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={editDailyLimit}
+                                  onChange={(e) => setEditDailyLimit(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                                  placeholder="e.g. 3"
+                                  className="w-full bg-slate-950 text-white font-mono text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                onClick={() => handleSaveEdit(btn.id)}
+                                disabled={savingButton || !editLabel.trim()}
+                                className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white text-xs font-semibold cursor-pointer transition"
+                              >
+                                {savingButton ? 'Saving...' : 'Save Changes'}
+                              </button>
+                              <button
+                                onClick={() => setEditingButtonId(null)}
+                                className="px-3 py-1.5 rounded bg-slate-800 text-slate-300 hover:text-white text-xs cursor-pointer transition"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-slate-400 font-mono break-all line-clamp-1">
+                            <span className="text-slate-500">API:</span> {btn.apiUrl || '(Built-in RTO scraper)'}
+                          </div>
                         )}
                       </div>
 
-                      {isEditing ? (
-                        <div className="space-y-2 pt-2 bg-slate-900/80 p-3 rounded-xl border border-indigo-500/40">
-                          <div className="text-[11px] font-semibold text-indigo-300 flex items-center gap-1.5">
+                      {/* Controls for this button */}
+                      {!isEditing && (
+                        <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                          <button
+                            onClick={() => handleToggleButton(btn)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer border ${
+                              btn.enabled
+                                ? 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                            }`}
+                            title={btn.enabled ? 'Turn button OFF' : 'Turn button ON'}
+                          >
+                            {btn.enabled ? <ToggleRight className="w-4 h-4 text-emerald-400" /> : <ToggleLeft className="w-4 h-4 text-rose-400" />}
+                            <span>{btn.enabled ? 'Turn OFF' : 'Turn ON'}</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleStartEdit(btn)}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs transition cursor-pointer"
+                            title="Rename button or change API endpoint"
+                          >
                             <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
-                            <span>Rename Button & Configure API</span>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <div>
-                              <label className="text-[10px] text-slate-300 font-medium block">
-                                Button Name / Label:
-                              </label>
-                              <input
-                                type="text"
-                                value={editLabel}
-                                onChange={(e) => setEditLabel(e.target.value)}
-                                placeholder="e.g. 📱 Mobile Lookup 2.0"
-                                className="w-full bg-slate-950 text-white font-medium text-xs px-2.5 py-1.5 rounded border border-indigo-500 focus:outline-none"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-slate-300 font-medium block">Search Input Placeholder:</label>
-                              <input
-                                type="text"
-                                value={editPlaceholder}
-                                onChange={(e) => setEditPlaceholder(e.target.value)}
-                                placeholder="e.g. Enter 10-digit mobile number"
-                                className="w-full bg-slate-950 text-white text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
-                              />
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                            <div className="sm:col-span-2">
-                              <label className="text-[10px] text-slate-300 font-medium block">API Endpoint URL:</label>
-                              <input
-                                type="url"
-                                value={editApiUrl}
-                                onChange={(e) => setEditApiUrl(e.target.value)}
-                                placeholder="https://api.example.com/search?query="
-                                className="w-full bg-slate-950 text-white font-mono text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-slate-300 font-medium block">
-                                Daily Limit Per User: <span className="text-slate-500">(0 = unlimited)</span>
-                              </label>
-                              <input
-                                type="number"
-                                min="0"
-                                value={editDailyLimit}
-                                onChange={(e) => setEditDailyLimit(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                                placeholder="e.g. 3"
-                                className="w-full bg-slate-950 text-white font-mono text-xs px-2.5 py-1.5 rounded border border-indigo-500/80 focus:outline-none"
-                              />
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2 pt-1">
+                            <span>Rename / API</span>
+                          </button>
+
+                          <button
+                            onClick={() => setActiveSubTab('playground')}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-900/30 hover:bg-indigo-900/50 text-indigo-300 hover:text-white border border-indigo-700/40 text-xs transition cursor-pointer"
+                            title="Test this API in Live Playground"
+                          >
+                            <TestTube className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Test API</span>
+                          </button>
+
+                          {btn.isCustom && (
                             <button
-                              onClick={() => handleSaveEdit(btn.id)}
-                              disabled={savingButton || !editLabel.trim()}
-                              className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white text-xs font-semibold cursor-pointer transition"
+                              onClick={() => handleDeleteButton(btn)}
+                              className="p-1.5 rounded-lg bg-rose-900/20 hover:bg-rose-900/40 text-rose-400 hover:text-rose-300 border border-rose-800/40 text-xs transition cursor-pointer"
+                              title="Delete custom button"
                             >
-                              {savingButton ? 'Saving...' : 'Save Changes'}
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
-                            <button
-                              onClick={() => setEditingButtonId(null)}
-                              className="px-3 py-1.5 rounded bg-slate-800 text-slate-300 hover:text-white text-xs cursor-pointer transition"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-[11px] text-slate-400 font-mono break-all line-clamp-1">
-                          <span className="text-slate-500">API:</span> {btn.apiUrl || '(Built-in RTO scraper)'}
+                          )}
                         </div>
                       )}
                     </div>
-
-                    {/* Controls for this button */}
-                    {!isEditing && (
-                      <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
-                        <button
-                          onClick={() => handleToggleButton(btn)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer border ${
-                            btn.enabled
-                              ? 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30'
-                              : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                          }`}
-                          title={btn.enabled ? 'Turn button OFF' : 'Turn button ON'}
-                        >
-                          {btn.enabled ? <ToggleRight className="w-4 h-4 text-emerald-400" /> : <ToggleLeft className="w-4 h-4 text-rose-400" />}
-                          <span>{btn.enabled ? 'Turn OFF' : 'Turn ON'}</span>
-                        </button>
-
-                        <button
-                          onClick={() => handleStartEdit(btn)}
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs transition cursor-pointer"
-                          title="Rename button or change API endpoint"
-                        >
-                          <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
-                          <span>Rename / API</span>
-                        </button>
-
-                        {btn.isCustom && (
-                          <button
-                            onClick={() => handleDeleteButton(btn)}
-                            className="p-1.5 rounded-lg bg-rose-900/20 hover:bg-rose-900/40 text-rose-400 hover:text-rose-300 border border-rose-800/40 text-xs transition cursor-pointer"
-                            title="Delete custom button"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
           )}
         </div>
@@ -1404,7 +1787,17 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleResetAllUsers}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold shadow transition cursor-pointer"
+                  title="Reset daily quota for all registered users"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Reset All Users Quota</span>
+                </button>
+
                 <a
                   href="/api/admin/users/export-text"
                   download
@@ -1683,6 +2076,11 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                               (Tot: {u.totalSearches || 0})
                             </span>
                           </div>
+                          {u.customLimit !== undefined && u.customLimit > 0 && (
+                            <span className="inline-block text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono border border-amber-500/30">
+                              Custom: {u.customLimit}/day
+                            </span>
+                          )}
                           {!isVIP && !isUserAdmin && (
                             <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
                               <div
@@ -1709,7 +2107,31 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                       </td>
 
                       <td className="py-3 px-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {/* Copy User ID */}
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(u.userId)}
+                            title="Copy Telegram User ID"
+                            className="p-1 rounded text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition cursor-pointer"
+                          >
+                            {copiedCode === u.userId ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          </button>
+
+                          {/* Set Custom Limit */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingCustomLimitUser(u);
+                              setCustomLimitInput(u.customLimit !== undefined ? u.customLimit : (u.dailyLimit || 20));
+                            }}
+                            title="Configure custom daily quota limit for this user"
+                            className="px-2 py-1 rounded text-[10px] font-medium bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 transition cursor-pointer flex items-center gap-1"
+                          >
+                            <SlidersHorizontal className="w-2.5 h-2.5" />
+                            <span>Limit</span>
+                          </button>
+
                           {/* Reset Daily Searches */}
                           <button
                             type="button"
@@ -1847,6 +2269,138 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                   <br />• <code className="text-cyan-300">/admin</code> ➜ View live metrics
                 </p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Live Logs & Activity Tab */}
+      {activeSubTab === 'logs' && (
+        <AuditLogsTab />
+      )}
+
+      {/* Custom User Daily Limit Modal */}
+      {editingCustomLimitUser && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-sky-500/20 text-sky-400">
+                  <SlidersHorizontal className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Custom Daily Lookup Limit</h3>
+                  <p className="text-xs text-slate-400 font-mono">
+                    User: {editingCustomLimitUser.firstName || editingCustomLimitUser.username || editingCustomLimitUser.userId} (ID: {editingCustomLimitUser.userId})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingCustomLimitUser(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Set a specific number of searches allowed per day for this user. Enter <strong className="text-sky-300">0</strong> to restore the standard tier default ({editingCustomLimitUser.role === 'premium' || editingCustomLimitUser.role === 'admin' ? 'Unlimited' : '20 searches/day'}).
+              </p>
+
+              <div>
+                <label className="text-xs text-slate-400 block mb-1 font-medium">Daily Limit (Searches / Day):</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="10000"
+                  value={customLimitInput}
+                  onChange={(e) => setCustomLimitInput(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  placeholder="e.g. 50"
+                  className="w-full bg-slate-950 border border-slate-700 text-white font-mono text-sm px-3.5 py-2.5 rounded-xl focus:border-sky-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {[0, 10, 25, 50, 100, 250, 500].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setCustomLimitInput(preset)}
+                    className={`px-2 py-1 rounded text-xs transition cursor-pointer font-mono ${
+                      customLimitInput === preset
+                        ? 'bg-sky-600 text-white font-bold'
+                        : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {preset === 0 ? 'Default (0)' : `${preset}/d`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setEditingCustomLimitUser(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveCustomLimit}
+                className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition cursor-pointer shadow-lg shadow-sky-600/20"
+              >
+                Save Limit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-App Safe Confirmation Modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div className={`p-2.5 rounded-xl shrink-0 ${
+                confirmModal.confirmStyle === 'danger'
+                  ? 'bg-rose-500/20 text-rose-400'
+                  : confirmModal.confirmStyle === 'warning'
+                  ? 'bg-amber-500/20 text-amber-400'
+                  : 'bg-indigo-500/20 text-indigo-400'
+              }`}>
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-white">{confirmModal.title}</h3>
+                <p className="text-xs text-slate-300 leading-relaxed">{confirmModal.message}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer shadow-lg ${
+                  confirmModal.confirmStyle === 'danger'
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'
+                    : confirmModal.confirmStyle === 'warning'
+                    ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-600/20'
+                    : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/20'
+                }`}
+              >
+                {confirmModal.confirmLabel || 'Confirm'}
+              </button>
             </div>
           </div>
         </div>

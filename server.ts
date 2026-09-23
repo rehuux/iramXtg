@@ -218,7 +218,38 @@ interface UserRecord {
   dailyButtonUsage?: Record<string, number>;
   lastActive?: string;
   createdAt?: string;
+  customLimit?: number;
 }
+
+interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  source: 'telegram_group' | 'telegram_dm' | 'web';
+  userId: string;
+  username?: string;
+  service: string;
+  query: string;
+  status: 'success' | 'error' | 'rate_limited';
+  durationMs: number;
+  details?: string;
+}
+
+const auditLogs: AuditLogEntry[] = [];
+
+function addAuditLog(entry: Omit<AuditLogEntry, 'id' | 'timestamp'>) {
+  const log: AuditLogEntry = {
+    id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: new Date().toISOString(),
+    ...entry,
+  };
+  auditLogs.unshift(log);
+  if (auditLogs.length > 250) {
+    auditLogs.pop();
+  }
+}
+
+let MAINTENANCE_MODE: boolean = false;
+let MAINTENANCE_MESSAGE: string = "🚧 *SYSTEM MAINTENANCE IN PROGRESS*\n\nBot is currently undergoing scheduled database maintenance and API upgrades. Please try again shortly!";
 
 interface RedeemCodeRecord {
   code: string;
@@ -414,7 +445,8 @@ function getUserTodaySearches(user: UserRecord): number {
 function getUserDailyLimit(user: UserRecord): number {
   if (user.role === 'admin' || user.role === 'premium') return 999;
   const bonus = (user.referralCount || 0) * REFERRAL_BONUS_PER_USER;
-  return FREE_DAILY_LIMIT + bonus;
+  const base = (user.customLimit && user.customLimit > 0) ? user.customLimit : FREE_DAILY_LIMIT;
+  return base + bonus;
 }
 
 function getUserRemaining(user: UserRecord): number {
@@ -870,12 +902,31 @@ async function editTelegramMessageText(chatId: number | string, messageId: numbe
   }
 }
 
-async function broadcastTelegramMessage(text: string, replyMarkup?: any): Promise<{ sent: number; failed: number }> {
+async function broadcastTelegramMessage(text: string, replyMarkup?: any, targetFilter?: 'all' | 'vip' | 'free' | 'dm'): Promise<{ sent: number; failed: number }> {
   let sent = 0;
   let failed = 0;
+
+  let candidateUserIds = Array.from(usersStore.keys()).filter(id => id !== 'web_client' && !isNaN(Number(id)));
+  if (targetFilter === 'vip') {
+    candidateUserIds = candidateUserIds.filter(id => {
+      const u = usersStore.get(id);
+      return u && (u.role === 'premium' || u.role === 'admin');
+    });
+  } else if (targetFilter === 'free') {
+    candidateUserIds = candidateUserIds.filter(id => {
+      const u = usersStore.get(id);
+      return u && u.role === 'free';
+    });
+  } else if (targetFilter === 'dm') {
+    candidateUserIds = candidateUserIds.filter(id => {
+      const u = usersStore.get(id);
+      return u && (u.allowDm !== false || u.role === 'admin');
+    });
+  }
+
   const targetChatIds = new Set<string | number>([
-    ...telegramChatIds,
-    ...Array.from(usersStore.keys()).filter(id => id !== 'web_client' && !isNaN(Number(id)))
+    ...(targetFilter === 'vip' || targetFilter === 'free' ? [] : telegramChatIds),
+    ...candidateUserIds
   ]);
 
   if (targetChatIds.size === 0 && ADMIN_USER_ID) {
@@ -2687,11 +2738,21 @@ async function sendSearchResult(chatId: number | string, user: UserRecord, card:
   }
 
   if (isGroup) {
-    // Auto-delete both user's lookup query and bot's lookup response (.txt file or message) after 40 seconds
+    // Auto-delete both user's lookup query and bot's lookup response (.txt file or message) after delay
     scheduleAutoDelete(chatId, [userMessageId, resultMsgId], AUTO_DELETE_DELAY_MS);
   } else {
     await sendTelegramMessage(chatId, "⚡ Select next service below or send a query directly:", getMainReplyKeyboard(user));
   }
+
+  addAuditLog({
+    source: isGroup ? 'telegram_group' : 'telegram_dm',
+    userId: String(user.userId),
+    username: user.username,
+    service: type || 'lookup',
+    query: query || '',
+    status: 'success',
+    durationMs: 0,
+  });
 }
 
 async function handleTelegramUpdate(msg: any) {
@@ -2716,6 +2777,13 @@ async function handleTelegramUpdate(msg: any) {
   user.lastActive = new Date().toISOString();
   const remaining = getUserRemaining(user);
   const dailyLimit = getUserDailyLimit(user);
+
+  // Maintenance Mode Intercept for non-admin users
+  const isUserAdmin = user.role === 'admin' || String(userId) === String(ADMIN_USER_ID);
+  if (MAINTENANCE_MODE && !isUserAdmin) {
+    await sendTelegramMessage(chatId, `🛠️ *BOT UNDER MAINTENANCE*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nBot par abhi maintenance aur system upgrades chal rahe hain.\n\nKripya thoda intezar karein ya official group join karein:\n👉 [lookupXchat](${OFFICIAL_GROUP_URL})\n━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    return;
+  }
 
   // Check for referral link payload in /start ref_USERID or /start USERID
   if (text.startsWith("/start")) {
@@ -4548,18 +4616,43 @@ async function startServer() {
     });
   });
 
+  // Admin: Delete / revoke single redeem code
+  app.delete('/api/admin/codes/:code', (req, res) => {
+    const { code } = req.params;
+    if (!code) return res.status(400).json({ success: false, error: 'Code is required' });
+    const upperCode = code.toUpperCase().trim();
+    if (redeemCodes.has(upperCode)) {
+      redeemCodes.delete(upperCode);
+      return res.json({ success: true, message: `Voucher ${upperCode} revoked and deleted.` });
+    }
+    return res.status(404).json({ success: false, error: 'Code not found' });
+  });
+
+  // Admin: Purge all claimed / exhausted redeem codes
+  app.post('/api/admin/codes/purge-claimed', (req, res) => {
+    let purged = 0;
+    for (const [code, voucher] of redeemCodes.entries()) {
+      if (voucher.usesLeft <= 0) {
+        redeemCodes.delete(code);
+        purged++;
+      }
+    }
+    res.json({ success: true, purged, message: `Purged ${purged} exhausted redeem codes.` });
+  });
+
   // Admin: Broadcast text announcement
   app.post('/api/admin/broadcast', async (req, res) => {
-    const { message } = req.body;
+    const { message, target = 'all' } = req.body;
     if (!message || !message.trim()) {
       return res.status(400).json({ success: false, error: 'Message cannot be empty' });
     }
-    const result = await broadcastTelegramMessage(`📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${message.trim()}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— Administration`);
+    const targetFilter = (['all', 'vip', 'free', 'dm'].includes(target) ? target : 'all') as any;
+    const result = await broadcastTelegramMessage(`📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${message.trim()}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— Administration`, undefined, targetFilter);
     res.json({
       success: true,
       sentCount: result.sent,
       failedCount: result.failed,
-      message: `Announcement broadcasted to ${result.sent} users.`
+      message: `Announcement broadcasted to ${result.sent} users (${targetFilter.toUpperCase()} audience).`
     });
   });
 
@@ -4670,11 +4763,42 @@ async function startServer() {
       referralCount: u.referralCount || 0,
       referralBonusDaily: u.referralBonusDaily || 0,
       allowDm: Boolean(u.allowDm !== false || u.role === 'admin'),
+      customLimit: u.customLimit || 0,
       lastActive: u.lastActive || '',
       createdAt: u.createdAt || '',
       dailyButtonUsage: (u.lastSearchDate === today && u.dailyButtonUsage) ? u.dailyButtonUsage : {},
     }));
     res.json({ success: true, users, total: users.length });
+  });
+
+  // POST /api/admin/users/reset-all-daily - reset searches for all users
+  app.post('/api/admin/users/reset-all-daily', async (req, res) => {
+    const today = getTodayString();
+    let count = 0;
+    for (const u of usersStore.values()) {
+      u.dailySearches = 0;
+      u.dailyButtonUsage = {};
+      u.lastSearchDate = today;
+      count++;
+    }
+    res.json({ success: true, message: `Successfully reset daily search quota for all ${count} users.` });
+  });
+
+  // POST /api/admin/users/set-custom-limit - set custom daily limit override
+  app.post('/api/admin/users/set-custom-limit', async (req, res) => {
+    const { userId, customLimit } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required' });
+    }
+    const user = getUser(userId);
+    const limitNum = Math.max(0, parseInt(customLimit, 10) || 0);
+    user.customLimit = limitNum > 0 ? limitNum : undefined;
+    await persistUser(user);
+    res.json({
+      success: true,
+      message: `User ${userId} daily limit override set to ${limitNum > 0 ? `${limitNum} searches/day` : 'Default'}`,
+      dailyLimit: getUserDailyLimit(user)
+    });
   });
 
   // POST /api/admin/users/reset-searches - reset today's search counter
@@ -4828,22 +4952,30 @@ async function startServer() {
     res.json({
       success: true,
       settings: {
-        autoDeleteSeconds: Math.round(AUTO_DELETE_DELAY_MS / 1000),
+        autoDeleteSeconds: AUTO_DELETE_DELAY_MS <= 0 ? 0 : Math.round(AUTO_DELETE_DELAY_MS / 1000),
         freeDailyLimit: FREE_DAILY_LIMIT,
         referralBonusPerUser: REFERRAL_BONUS_PER_USER,
         officialGroupId: OFFICIAL_GROUP_ID,
         officialGroupUrl: OFFICIAL_GROUP_URL,
         officialGroupUsername: OFFICIAL_GROUP_USERNAME,
         telegramActive: isTelegramPolling,
+        maintenanceMode: MAINTENANCE_MODE,
       }
     });
   });
 
   app.post('/api/admin/settings', (req, res) => {
-    const { autoDeleteSeconds, freeDailyLimit: newLimit, referralBonusPerUser: newBonus, officialGroupId: newGroupId, officialGroupUrl: newGroupUrl } = req.body;
+    const { autoDeleteSeconds, freeDailyLimit: newLimit, referralBonusPerUser: newBonus, officialGroupId: newGroupId, officialGroupUrl: newGroupUrl, maintenanceMode } = req.body;
     if (autoDeleteSeconds !== undefined) {
-      const sec = Math.max(5, Math.min(600, Number(autoDeleteSeconds) || 40));
-      AUTO_DELETE_DELAY_MS = sec * 1000;
+      const sec = Number(autoDeleteSeconds);
+      if (sec <= 0) {
+        AUTO_DELETE_DELAY_MS = 0;
+      } else {
+        AUTO_DELETE_DELAY_MS = Math.max(5, Math.min(600, sec)) * 1000;
+      }
+    }
+    if (maintenanceMode !== undefined) {
+      MAINTENANCE_MODE = Boolean(maintenanceMode);
     }
     if (newLimit !== undefined) {
       FREE_DAILY_LIMIT = Math.max(1, Math.min(1000, Number(newLimit) || 20));
@@ -4863,15 +4995,46 @@ async function startServer() {
       success: true,
       message: 'System settings updated successfully!',
       settings: {
-        autoDeleteSeconds: Math.round(AUTO_DELETE_DELAY_MS / 1000),
+        autoDeleteSeconds: AUTO_DELETE_DELAY_MS <= 0 ? 0 : Math.round(AUTO_DELETE_DELAY_MS / 1000),
         freeDailyLimit: FREE_DAILY_LIMIT,
         referralBonusPerUser: REFERRAL_BONUS_PER_USER,
         officialGroupId: OFFICIAL_GROUP_ID,
         officialGroupUrl: OFFICIAL_GROUP_URL,
         officialGroupUsername: OFFICIAL_GROUP_USERNAME,
         telegramActive: isTelegramPolling,
+        maintenanceMode: MAINTENANCE_MODE,
       }
     });
+  });
+
+  // Admin: Restart / Test Telegram polling daemon
+  app.post('/api/admin/bot/restart', async (req, res) => {
+    try {
+      if (BOT_TOKEN && !isTelegramPolling) {
+        runTelegramPoller().catch((err) => console.error('[Poller Restart Error]:', err));
+      }
+      res.json({
+        success: true,
+        message: 'Telegram daemon connection verified and active.',
+        pollingActive: isTelegramPolling
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to restart bot daemon' });
+    }
+  });
+
+  // Admin: Real-time Audit Logs & Query Feed
+  app.get('/api/admin/logs', (req, res) => {
+    res.json({
+      success: true,
+      logs: auditLogs,
+      total: auditLogs.length
+    });
+  });
+
+  app.post('/api/admin/logs/clear', (req, res) => {
+    auditLogs.length = 0;
+    res.json({ success: true, message: 'Audit logs cleared successfully.' });
   });
 
   // ── ADMIN LIVE API TESTER / PLAYGROUND ──
@@ -5001,6 +5164,16 @@ async function startServer() {
       }
 
       recordSearch('web_client');
+
+      addAuditLog({
+        source: 'web',
+        userId: 'web_client',
+        username: 'WebAgent',
+        service: type,
+        query: cleanQuery,
+        status: data ? 'success' : 'error',
+        durationMs: 0,
+      });
 
       res.json({
         success: Boolean(data),

@@ -76,10 +76,24 @@ export interface BotUser {
   referralCount: number;
   referralBonusDaily?: number;
   allowDm: boolean;
+  customLimit?: number;
   lastSearchDate?: string;
   dailyButtonUsage?: Record<string, number>;
   lastActive?: string;
   createdAt?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  source: 'telegram_group' | 'telegram_dm' | 'web';
+  userId: string;
+  username?: string;
+  service: string;
+  query: string;
+  status: 'success' | 'error' | 'rate_limited';
+  durationMs: number;
+  details?: string;
 }
 
 export interface RedeemCode {
