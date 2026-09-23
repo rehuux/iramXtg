@@ -851,7 +851,7 @@ async function sendTelegramPhoto(
   if (!BOT_TOKEN) return null;
   try {
     const isGroup = Number(chatId) < 0 || String(chatId).startsWith('-');
-    if (photo.startsWith('http://') || photo.startsWith('https://')) {
+    if (!photo.startsWith('data:')) {
       const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1430,16 +1430,42 @@ function getAdminInlineKeyboard(active: boolean) {
         { text: "🔢 Free Daily Limit", callback_data: "admin_menu_dailyquota" }
       ],
       [
-        { text: "🎛️ Manage Buttons & APIs", callback_data: "admin_buttons_list" },
-        { text: "📢 Global Announcement", callback_data: "admin_broadcast_prompt" }
+        { text: "🎁 Vouchers & Broadcast", callback_data: "admin_menu_vouchers" },
+        { text: "🎛️ Manage Buttons & APIs", callback_data: "admin_buttons_list" }
       ],
       [
-        { text: "🚀 Drop Code (First-Come)", callback_data: "admin_drop_7" },
-        { text: "💎 Gen VIP Key (30D)", callback_data: "admin_gen_30" }
+        { text: "📢 Send Announcement", callback_data: "admin_broadcast_prompt" },
+        { text: "🚀 Drop Code (7D)", callback_data: "admin_drop_7" }
       ],
       [
         { text: "📄 Export Users File (.txt)", callback_data: "admin_users_export" },
         { text: "🏠 Main Menu", callback_data: "action_main" }
+      ]
+    ]
+  };
+}
+
+function getAdminVouchersBroadcastKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: "📢 Broadcast Message (Text)", callback_data: "admin_broadcast_prompt" },
+        { text: "🖼️ Broadcast Image / Photo", callback_data: "admin_broadcast_photo_prompt" }
+      ],
+      [
+        { text: "🚀 Drop Voucher (7 Days)", callback_data: "admin_drop_7" },
+        { text: "⚡ Drop Voucher (30 Days)", callback_data: "admin_drop_30" }
+      ],
+      [
+        { text: "💎 Gen VIP Key (30 Days)", callback_data: "admin_gen_30" },
+        { text: "👑 Gen VIP Key (365 Days)", callback_data: "admin_gen_365" }
+      ],
+      [
+        { text: "📋 View Active Vouchers", callback_data: "admin_list_codes" },
+        { text: "🗑️ Purge Used / Claimed", callback_data: "admin_purge_codes" }
+      ],
+      [
+        { text: "🔙 Back to Admin Master", callback_data: "admin_back_to_panel" }
       ]
     ]
   };
@@ -1676,8 +1702,9 @@ function getAdminControlCard(active: boolean): string {
 • \`/export_users\` ➜ Download complete .txt report
 • \`/autodelete <sec>\` ➜ Auto-delete all group messages (or /set_delay)
 • \`/set_limit <num>\` ➜ Set free daily limit
-• \`/dropcode <days>\` ➜ Broadcast single-use voucher
-• \`/broadcast <msg>\` ➜ Send global announcement
+• \`/vouchers\` ➜ Open Vouchers & Broadcast Hub
+• \`/broadcast <msg>\` ➜ Send global announcement (photo/text)
+• \`/dropcode <days>\` ➜ Broadcast single-use VIP voucher
 
 👇 *Tap an option below to manage:*`;
 }
@@ -2038,9 +2065,11 @@ async function runTelegramPoller() {
               scheduleAutoDelete(chatId, [msg.message_id], AUTO_DELETE_DELAY_MS);
             }
 
-            if (msg.text || msg.caption) {
+            if (msg.text || msg.caption || msg.photo) {
               if (!msg.text && msg.caption) {
                 msg.text = msg.caption;
+              } else if (!msg.text && !msg.caption) {
+                msg.text = '';
               }
               await handleTelegramUpdate(msg);
             }
@@ -2258,10 +2287,86 @@ Tap any service button directly, or send slash commands:
       return;
     }
 
+    if (data === "admin_menu_vouchers" || data === "admin_vouchers_menu") {
+      await answerTelegramCallbackQuery(cqId, "Opening Vouchers & Broadcast Hub");
+      const activeCodes = Array.from(redeemCodes.values()).filter(c => c.usesLeft > 0);
+      const textMsg = `🎁 *VOUCHERS & BROADCAST CONTROL HUB*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+📢 *Announcements:* Send messages or photos with captions directly to all \`${usersStore.size}\` users.
+🔑 *Active Redeem Keys:* \`${activeCodes.length} vouchers ready\`
+
+Choose an option below to broadcast, drop fast-finger codes, create VIP vouchers, or manage active keys:`;
+      if (cq.message?.message_id) {
+        await editTelegramMessageText(chatId, cq.message.message_id, textMsg, getAdminVouchersBroadcastKeyboard());
+      } else {
+        await sendTelegramMessage(chatId, textMsg, getAdminVouchersBroadcastKeyboard());
+      }
+      return;
+    }
+
     if (data === "admin_broadcast_prompt") {
       user.pendingAction = 'admin_broadcast';
-      await answerTelegramCallbackQuery(cqId, "Ready for announcement text");
-      await sendTelegramMessage(chatId, `📢 *SEND BROADCAST ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nPlease type and send the message you want to broadcast to all registered bot users:\n\n*(Or send /cancel to abort)*`, getPromptInlineKeyboard('cancel'));
+      await answerTelegramCallbackQuery(cqId, "Ready for broadcast");
+      await sendTelegramMessage(chatId, `📢 *SEND BROADCAST ANNOUNCEMENT (TEXT OR PHOTO)*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Aap yahan text message ya photo send kar sakte hain:
+
+1️⃣ *Photo + Caption:*
+Direct yahan Telegram chat me koi bhi *Photo* send karein (caption ke sath ya bina caption ke). Sabhi users ko photo ke sath deliver hoga!
+
+2️⃣ *Text Announcement:*
+Sidha apna announcement text message yahan likh kar send kar dein.
+
+3️⃣ *Image URL:*
+Direct image link (URL) paste karke bhi send kar sakte hain.
+
+👥 *Target Audience:* All registered users (${usersStore.size})
+❌ *Cancel:* Send /cancel to abort.`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
+
+    if (data === "admin_broadcast_photo_prompt") {
+      user.pendingAction = 'admin_broadcast_photo';
+      await answerTelegramCallbackQuery(cqId, "Ready for photo broadcast");
+      await sendTelegramMessage(chatId, `🖼️ *BROADCAST PHOTO / IMAGE ANNOUNCEMENT*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Kripya yahan koi bhi *PHOTO* send karein:
+• Photo ke sath aap caption bhi likh sakte hain jo sath me deliver hoga.
+• Ya kisi image ka direct URL yahan paste karke bhej sakte hain.
+
+👥 *Target Audience:* All registered users (${usersStore.size})
+❌ *Cancel:* Send /cancel to abort.`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
+
+    if (data === "admin_list_codes") {
+      await answerTelegramCallbackQuery(cqId, "Loading active vouchers...");
+      const activeList = Array.from(redeemCodes.values()).filter(c => c.usesLeft > 0);
+      if (activeList.length === 0) {
+        await sendTelegramMessage(chatId, `🔑 *NO ACTIVE REDEEM KEYS FOUND*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSabhi keys use ho chuki hain ya koi key create nahi hui hai.\nNiche diye buttons se nayi key banayein!`, getAdminVouchersBroadcastKeyboard());
+        return;
+      }
+      let codesText = `🔑 *ACTIVE REDEEM KEYS (${activeList.length})*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      activeList.slice(0, 15).forEach((c, idx) => {
+        codesText += `${idx + 1}. 💎 \`${c.code}\`\n   ⏳ Duration: *${c.days} Days* VIP | Uses: *${c.usesLeft}/${c.totalUses}*\n   👉 Tap code to copy, redeem: \`/redeem ${c.code}\`\n\n`;
+      });
+      if (activeList.length > 15) {
+        codesText += `*(Showing 15 of ${activeList.length} active codes)*\n`;
+      }
+      await sendTelegramMessage(chatId, codesText, getAdminVouchersBroadcastKeyboard());
+      return;
+    }
+
+    if (data === "admin_purge_codes") {
+      await answerTelegramCallbackQuery(cqId, "Purging exhausted vouchers...");
+      let purged = 0;
+      for (const [code, item] of redeemCodes.entries()) {
+        if (item.usesLeft <= 0) {
+          redeemCodes.delete(code);
+          purged++;
+        }
+      }
+      await sendTelegramMessage(chatId, `🧹 *PURGED ${purged} EXHAUSTED CODES*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSabhi expired aur used codes clean kar diye gaye hain. Active codes safe hain.`, getAdminVouchersBroadcastKeyboard());
       return;
     }
 
@@ -2882,8 +2987,11 @@ async function sendSearchResult(chatId: number | string, user: UserRecord, card:
 async function handleTelegramUpdate(msg: any) {
   const chatId = msg.chat.id;
   const userId = msg.from?.id || chatId;
-  const text = msg.text.trim();
+  const text = (msg.text || msg.caption || "").trim();
   const userMsgId = msg.message_id;
+  const photoList = Array.isArray(msg.photo) ? msg.photo : [];
+  const highestPhoto = photoList.length > 0 ? photoList[photoList.length - 1] : null;
+  const photoFileId = highestPhoto?.file_id;
 
   const chatType = msg.chat?.type || (Number(chatId) < 0 ? 'supergroup' : 'private');
   const isPrivate = chatType === 'private' || Number(chatId) > 0;
@@ -3050,15 +3158,48 @@ To access ${BOT_NAME} OSINT Bot, joining our official intelligence channel is ma
   }
 
   // ── ADMIN BROADCAST & MANAGEMENT PENDING ACTIONS ──
-  if (user.pendingAction === 'admin_broadcast' && isAdmin) {
+  if ((user.pendingAction === 'admin_broadcast' || user.pendingAction === 'admin_broadcast_photo') && isAdmin) {
     user.pendingAction = undefined;
     if (text === "❌ Cancel" || text === "/cancel") {
       await sendTelegramMessage(chatId, "🔙 Broadcast cancelled.", getMainReplyKeyboard(user));
       return;
     }
-    await sendTelegramMessage(chatId, `⏳ *Broadcasting announcement to all registered users...*`);
-    const result = await broadcastTelegramMessage(`📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${text}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— ${msg.from?.first_name || 'Admin'}`);
-    await sendTelegramMessage(chatId, `✅ Broadcast complete!\nDelivered to: ${result.sent} users\nFailed: ${result.failed}`, getMainReplyKeyboard(user));
+
+    let targetPhoto: string | undefined = photoFileId;
+    let broadcastContent = text;
+
+    // Check if message is a reply to another message with a photo
+    if (!targetPhoto && msg.reply_to_message?.photo && Array.isArray(msg.reply_to_message.photo)) {
+      const replyPhotos = msg.reply_to_message.photo;
+      targetPhoto = replyPhotos[replyPhotos.length - 1]?.file_id;
+    }
+
+    // Check if text is an image URL
+    if (!targetPhoto) {
+      const urlMatch = broadcastContent.match(/^(https?:\/\/\S+\.(?:jpg|jpeg|png|webp|gif)(?:\?\S*)?)(?:\s+([\s\S]*))?$/i);
+      if (urlMatch) {
+        targetPhoto = urlMatch[1];
+        broadcastContent = (urlMatch[2] || '').trim();
+      }
+    }
+
+    if (!broadcastContent && !targetPhoto) {
+      await sendTelegramMessage(chatId, "⚠️ Broadcast content cannot be empty. Operation cancelled.", getMainReplyKeyboard(user));
+      return;
+    }
+
+    const cleanCaption = broadcastContent.trim();
+    const formattedAnnouncement = cleanCaption
+      ? `📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${cleanCaption}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— ${msg.from?.first_name || 'Admin'}`
+      : `📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— ${msg.from?.first_name || 'Admin'}`;
+
+    await sendTelegramMessage(chatId, `⏳ *Broadcasting announcement ${targetPhoto ? 'with PHOTO 🖼️ ' : ''}to all registered users...*`);
+    const result = await broadcastTelegramMessage(formattedAnnouncement, undefined, 'all', targetPhoto);
+    await sendTelegramMessage(
+      chatId,
+      `✅ *BROADCAST COMPLETE!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n📨 *Delivered to:* ${result.sent} users\n❌ *Failed:* ${result.failed}\n🖼️ *Attachment:* ${targetPhoto ? 'Photo Attached ✅' : 'Text Announcement'}`,
+      getMainReplyKeyboard(user)
+    );
     return;
   }
 
@@ -3304,6 +3445,70 @@ User must now run lookups strictly in the official group.`, getMainReplyKeyboard
     const adminCard = getAdminControlCard(isBotActive);
     const adminMarkup = getAdminInlineKeyboard(isBotActive);
     await sendTelegramMessage(chatId, adminCard, adminMarkup);
+    return;
+  }
+
+  if (isAdmin && (text === "🎁 Vouchers & Broadcast" || text === "/vouchers" || text === "/voucher")) {
+    user.pendingAction = undefined;
+    const activeCodes = Array.from(redeemCodes.values()).filter(c => c.usesLeft > 0);
+    const textMsg = `🎁 *VOUCHERS & BROADCAST CONTROL HUB*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+📢 *Announcements:* Send messages or photos with captions directly to all \`${usersStore.size}\` users.
+🔑 *Active Redeem Keys:* \`${activeCodes.length} vouchers ready\`
+
+Choose an option below to broadcast, drop fast-finger codes, create VIP vouchers, or manage active keys:`;
+    await sendTelegramMessage(chatId, textMsg, getAdminVouchersBroadcastKeyboard());
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/dropcode") || text.startsWith("/drop_code"))) {
+    const parts = text.split(/\s+/);
+    const days = parseInt(parts[1], 10) || 7;
+    await sendTelegramMessage(chatId, `⏳ *Broadcasting single-use ${days}-day VIP voucher to all users...*`);
+    const drop = await broadcastRedeemCode(days, msg.from?.first_name || 'Admin');
+    await sendTelegramMessage(chatId, `✅ *BROADCAST CODE DROPPED!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n🔑 *Code:* \`${drop.code}\`\n⏳ *Duration:* ${drop.days} Days\n📨 *Delivered to:* ${drop.sent} users\n⚡ *Rule:* Single-use only — Jo pehle redeem karega use hi milega!`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text.startsWith("/broadcast") || text.startsWith("/bc"))) {
+    let msgBody = text.replace(/^\/(?:broadcast|bc)(?:@\w+)?/i, "").trim();
+    let targetPhoto: string | undefined = photoFileId;
+
+    if (!targetPhoto && msg.reply_to_message?.photo && Array.isArray(msg.reply_to_message.photo)) {
+      const replyPhotos = msg.reply_to_message.photo;
+      targetPhoto = replyPhotos[replyPhotos.length - 1]?.file_id;
+    }
+
+    if (!msgBody && !targetPhoto) {
+      user.pendingAction = 'admin_broadcast';
+      await sendTelegramMessage(chatId, `📢 *SEND BROADCAST ANNOUNCEMENT (TEXT OR PHOTO)*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Aap yahan text message bhej sakte hain, ya direct photo / image send kar sakte hain!
+
+🖼️ *Photo Bhejne Ke Liye:*
+• Yahan direct photo send karein (caption ke sath ya bina caption ke).
+• Ya photo URL bhej dein.
+
+📝 *Text Announcement Ke Liye:*
+• Sidha announcement text bhej dein.
+
+💡 *Quick Command:* \`/broadcast <your message>\`
+❌ *Cancel:* Send /cancel to abort.`, getPromptInlineKeyboard('cancel'));
+      return;
+    }
+
+    const cleanCaption = msgBody.trim();
+    const formattedAnnouncement = cleanCaption
+      ? `📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${cleanCaption}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— ${msg.from?.first_name || 'Admin'}`
+      : `📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— ${msg.from?.first_name || 'Admin'}`;
+
+    await sendTelegramMessage(chatId, `⏳ *Broadcasting announcement ${targetPhoto ? 'with PHOTO 🖼️ ' : ''}to all registered users...*`);
+    const result = await broadcastTelegramMessage(formattedAnnouncement, undefined, 'all', targetPhoto);
+    await sendTelegramMessage(
+      chatId,
+      `✅ *BROADCAST COMPLETE!*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n📨 *Delivered to:* ${result.sent} users\n❌ *Failed:* ${result.failed}\n🖼️ *Attachment:* ${targetPhoto ? 'Photo Attached ✅' : 'Text Announcement'}`,
+      getMainReplyKeyboard(user)
+    );
     return;
   }
 
