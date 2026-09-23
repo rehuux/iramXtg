@@ -39,7 +39,10 @@ import {
   Layers,
   Zap,
   SlidersHorizontal,
-  X
+  X,
+  Image as ImageIcon,
+  UploadCloud,
+  Link as LinkIcon
 } from 'lucide-react';
 import type { StatsData, BotConfig, RedeemCode, BotButton, BotUser } from '../types';
 import { AdminGate } from './admin/AdminGate';
@@ -81,9 +84,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
   const [buttonCategoryFilter, setButtonCategoryFilter] = useState<string>('all');
   const [buttonSearchQuery, setButtonSearchQuery] = useState<string>('');
 
-  // Code filtering & broadcast target
+  // Code filtering & broadcast target & media
   const [codeFilter, setCodeFilter] = useState<'all' | 'active' | 'claimed'>('all');
   const [broadcastTarget, setBroadcastTarget] = useState<'all' | 'vip' | 'free' | 'dm'>('all');
+  const [broadcastImageUrl, setBroadcastImageUrl] = useState<string>('');
+  const [broadcastImagePreview, setBroadcastImagePreview] = useState<string | null>(null);
+  const [broadcastImageMode, setBroadcastImageMode] = useState<'url' | 'upload'>('url');
 
   const [codes, setCodes] = useState<RedeemCode[]>([]);
   const [loadingCodes, setLoadingCodes] = useState(false);
@@ -681,7 +687,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
 
   const handleBroadcastAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!announcementMsg.trim()) return;
+    if (!announcementMsg.trim() && !broadcastImageUrl.trim()) return;
 
     setSendingAnnouncement(true);
     setAnnouncementSuccess(null);
@@ -691,19 +697,46 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           message: announcementMsg.trim(),
-          target: broadcastTarget
+          target: broadcastTarget,
+          imageUrl: broadcastImageUrl.trim() || undefined
         }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
         setAnnouncementSuccess(data.message || 'Announcement broadcasted successfully!');
         setAnnouncementMsg('');
+        setBroadcastImageUrl('');
+        setBroadcastImagePreview(null);
+      } else {
+        setAnnouncementSuccess(data.error || 'Failed to broadcast announcement.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to broadcast announcement', err);
+      setAnnouncementSuccess(err.message || 'Failed to broadcast announcement.');
     } finally {
       setSendingAnnouncement(false);
     }
+  };
+
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) {
+      alert('Image exceeds 15MB limit. Please choose a smaller image.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      setBroadcastImageUrl(dataUrl);
+      setBroadcastImagePreview(dataUrl);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveBroadcastImage = () => {
+    setBroadcastImageUrl('');
+    setBroadcastImagePreview(null);
   };
 
   const handleCopyAllActiveCodes = () => {
@@ -1298,7 +1331,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
           ))}
         </div>
 
-        <form onSubmit={handleBroadcastAnnouncement} className="space-y-3">
+        <form onSubmit={handleBroadcastAnnouncement} className="space-y-3.5">
           <textarea
             id="broadcast-message-textarea"
             rows={3}
@@ -1308,23 +1341,164 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
             className="w-full bg-slate-950 text-white text-xs px-3.5 py-2.5 rounded-xl border border-slate-800 focus:border-emerald-500 focus:outline-none"
           />
 
-          <div className="flex items-center justify-between">
+          {/* Media / Image Attachment Card */}
+          <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-3 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+                <ImageIcon className="w-3.5 h-3.5 text-sky-400" />
+                <span>Attach Image to Broadcast (Optional)</span>
+                {broadcastImagePreview && (
+                  <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                    Ready to send
+                  </span>
+                )}
+              </div>
+
+              {/* Mode Switcher */}
+              <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setBroadcastImageMode('url')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition cursor-pointer ${
+                    broadcastImageMode === 'url'
+                      ? 'bg-sky-600 text-white font-medium shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <LinkIcon className="w-3 h-3" />
+                  <span>Image URL</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBroadcastImageMode('upload')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition cursor-pointer ${
+                    broadcastImageMode === 'upload'
+                      ? 'bg-sky-600 text-white font-medium shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <UploadCloud className="w-3 h-3" />
+                  <span>Upload File</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Input by Mode */}
+            {broadcastImageMode === 'url' ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="url"
+                    value={broadcastImageUrl.startsWith('data:') ? '' : broadcastImageUrl}
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      setBroadcastImageUrl(val);
+                      setBroadcastImagePreview(val || null);
+                    }}
+                    placeholder="https://example.com/banner.jpg or https://i.imgur.com/..."
+                    className="flex-1 bg-slate-900 border border-slate-700 text-white text-xs px-3 py-2 rounded-lg focus:border-sky-500 focus:outline-none font-mono"
+                  />
+                  {broadcastImageUrl && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveBroadcastImage}
+                      className="px-2.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xs flex items-center gap-1 transition cursor-pointer"
+                      title="Clear image"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Clear</span>
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  Tip: Paste any direct image URL (JPEG, PNG, WEBP, etc.) from Imgur, Telegram CDN, or your host.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 text-xs font-medium cursor-pointer transition">
+                    <UploadCloud className="w-4 h-4 text-sky-400" />
+                    <span>Choose Image from Device</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageFileChange}
+                      className="hidden"
+                    />
+                  </label>
+                  {broadcastImagePreview && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveBroadcastImage}
+                      className="px-2.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-400 hover:text-rose-300 text-xs flex items-center gap-1 transition cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Remove</span>
+                    </button>
+                  )}
+                  <span className="text-[11px] text-slate-500">
+                    Supports JPG, PNG, WEBP, GIF up to 15MB.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Live Image Preview Banner */}
+            {broadcastImagePreview && (
+              <div className="mt-2 p-2 rounded-xl bg-slate-900/90 border border-sky-500/30 flex items-center gap-3">
+                <div className="w-16 h-16 rounded-lg overflow-hidden border border-slate-700 bg-slate-950 shrink-0 relative group">
+                  <img
+                    src={broadcastImagePreview}
+                    alt="Broadcast attachment preview"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>Image Attached</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                    Will be delivered with photo caption directly to recipient's Telegram chat.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRemoveBroadcastImage}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-400 transition cursor-pointer"
+                  title="Remove image attachment"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
             {announcementSuccess ? (
               <span className="text-xs text-emerald-400 font-medium">{announcementSuccess}</span>
             ) : (
               <span className="text-[11px] text-slate-500">
-                Target: <strong className="text-emerald-400 uppercase">{broadcastTarget}</strong> audience.
+                Target: <strong className="text-emerald-400 uppercase">{broadcastTarget}</strong> audience
+                {broadcastImageUrl ? ' • 🖼️ with image' : ''}.
               </span>
             )}
 
             <button
               id="send-announcement-btn"
               type="submit"
-              disabled={!announcementMsg.trim() || sendingAnnouncement}
+              disabled={(!announcementMsg.trim() && !broadcastImageUrl.trim()) || sendingAnnouncement}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white text-xs font-semibold transition cursor-pointer"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>{sendingAnnouncement ? 'Broadcasting...' : `Broadcast to ${broadcastTarget.toUpperCase()}`}</span>
+              <span>
+                {sendingAnnouncement
+                  ? 'Broadcasting...'
+                  : broadcastImageUrl
+                  ? `Broadcast Photo + Text (${broadcastTarget.toUpperCase()})`
+                  : `Broadcast to ${broadcastTarget.toUpperCase()}`}
+              </span>
             </button>
           </div>
         </form>

@@ -841,6 +841,119 @@ async function sendTelegramDocument(
   return null;
 }
 
+async function sendTelegramPhoto(
+  chatId: number | string,
+  photo: string,
+  caption?: string,
+  replyMarkup?: any
+): Promise<number | null> {
+  if (chatId) telegramChatIds.add(chatId);
+  if (!BOT_TOKEN) return null;
+  try {
+    const isGroup = Number(chatId) < 0 || String(chatId).startsWith('-');
+    if (photo.startsWith('http://') || photo.startsWith('https://')) {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          photo,
+          caption: caption ? caption.slice(0, 1024) : undefined,
+          parse_mode: 'Markdown',
+          reply_markup: replyMarkup,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok && data.result?.message_id) {
+        const msgId = data.result.message_id;
+        if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+          scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
+        }
+        return msgId;
+      }
+      // If caption formatting fails (e.g. invalid markdown)
+      if (!data.ok && caption && data.description?.includes('entity')) {
+        const plainRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            photo,
+            caption: caption.replace(/[*_`[\]()]/g, '').slice(0, 1024),
+            reply_markup: replyMarkup,
+          }),
+        });
+        const plainData = await plainRes.json();
+        if (plainData.ok && plainData.result?.message_id) {
+          const msgId = plainData.result.message_id;
+          if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+            scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
+          }
+          return msgId;
+        }
+      }
+      console.error("sendTelegramPhoto error response:", data);
+    } else if (photo.startsWith('data:image/')) {
+      const match = photo.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+      if (match) {
+        const mimeType = match[1];
+        const base64Data = match[2];
+        const buffer = Buffer.from(base64Data, 'base64');
+        const blob = new Blob([buffer], { type: mimeType });
+        const ext = mimeType.split('/')[1] || 'jpg';
+        const formData = new FormData();
+        formData.append('chat_id', String(chatId));
+        formData.append('photo', blob, `broadcast_image.${ext}`);
+        if (caption) {
+          formData.append('caption', caption.slice(0, 1024));
+          formData.append('parse_mode', 'Markdown');
+        }
+        if (replyMarkup) {
+          formData.append('reply_markup', JSON.stringify(replyMarkup));
+        }
+        const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await res.json();
+        if (data.ok && data.result?.message_id) {
+          const msgId = data.result.message_id;
+          if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+            scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
+          }
+          return msgId;
+        }
+        // Fallback for markdown in caption
+        if (!data.ok && caption && data.description?.includes('entity')) {
+          const plainFormData = new FormData();
+          plainFormData.append('chat_id', String(chatId));
+          plainFormData.append('photo', blob, `broadcast_image.${ext}`);
+          plainFormData.append('caption', caption.replace(/[*_`[\]()]/g, '').slice(0, 1024));
+          if (replyMarkup) {
+            plainFormData.append('reply_markup', JSON.stringify(replyMarkup));
+          }
+          const plainRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+            method: 'POST',
+            body: plainFormData,
+          });
+          const plainData = await plainRes.json();
+          if (plainData.ok && plainData.result?.message_id) {
+            const msgId = plainData.result.message_id;
+            if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+              scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
+            }
+            return msgId;
+          }
+        }
+        console.error("sendTelegramPhoto base64 error response:", data);
+      }
+    }
+  } catch (err: any) {
+    console.error("Telegram sendPhoto error:", err.message);
+  }
+  return null;
+}
+
 async function deleteTelegramMessage(chatId: number | string, messageId: number | null | undefined): Promise<boolean> {
   if (!BOT_TOKEN || !messageId) return false;
   try {
@@ -902,7 +1015,12 @@ async function editTelegramMessageText(chatId: number | string, messageId: numbe
   }
 }
 
-async function broadcastTelegramMessage(text: string, replyMarkup?: any, targetFilter?: 'all' | 'vip' | 'free' | 'dm'): Promise<{ sent: number; failed: number }> {
+async function broadcastTelegramMessage(
+  text: string,
+  replyMarkup?: any,
+  targetFilter?: 'all' | 'vip' | 'free' | 'dm',
+  imageUrl?: string
+): Promise<{ sent: number; failed: number }> {
   let sent = 0;
   let failed = 0;
 
@@ -936,17 +1054,23 @@ async function broadcastTelegramMessage(text: string, replyMarkup?: any, targetF
   for (const chatId of targetChatIds) {
     try {
       if (BOT_TOKEN) {
-        const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text,
-            parse_mode: 'Markdown',
-            reply_markup: replyMarkup,
-          })
-        });
-        if (res.ok) sent++;
+        let msgSent = false;
+        if (imageUrl) {
+          const photoMsgId = await sendTelegramPhoto(chatId, imageUrl, text.slice(0, 1024), replyMarkup);
+          if (photoMsgId) {
+            msgSent = true;
+            if (text.length > 1024) {
+              await sendTelegramMessage(chatId, text.slice(1024));
+            }
+          }
+        }
+        if (!msgSent) {
+          const textMsgId = await sendTelegramMessage(chatId, text, replyMarkup);
+          if (textMsgId) {
+            msgSent = true;
+          }
+        }
+        if (msgSent) sent++;
         else failed++;
       } else {
         sent++;
@@ -4451,7 +4575,8 @@ async function startServer() {
 
   const app = express();
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ limit: '25mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
   // Health check
   app.get('/api/health', (req, res) => {
@@ -4640,19 +4765,24 @@ async function startServer() {
     res.json({ success: true, purged, message: `Purged ${purged} exhausted redeem codes.` });
   });
 
-  // Admin: Broadcast text announcement
+  // Admin: Broadcast text & image announcement
   app.post('/api/admin/broadcast', async (req, res) => {
-    const { message, target = 'all' } = req.body;
-    if (!message || !message.trim()) {
-      return res.status(400).json({ success: false, error: 'Message cannot be empty' });
+    const { message, target = 'all', imageUrl } = req.body;
+    if ((!message || !message.trim()) && !imageUrl) {
+      return res.status(400).json({ success: false, error: 'Announcement message or image cannot be empty' });
     }
     const targetFilter = (['all', 'vip', 'free', 'dm'].includes(target) ? target : 'all') as any;
-    const result = await broadcastTelegramMessage(`📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${message.trim()}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— Administration`, undefined, targetFilter);
+    const cleanMsg = (message || '').trim();
+    const formattedText = cleanMsg
+      ? `📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${cleanMsg}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— Administration`
+      : `📢 *OFFICIAL ANNOUNCEMENT*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n— Administration`;
+    const cleanImageUrl = typeof imageUrl === 'string' && imageUrl.trim().length > 0 ? imageUrl.trim() : undefined;
+    const result = await broadcastTelegramMessage(formattedText, undefined, targetFilter, cleanImageUrl);
     res.json({
       success: true,
       sentCount: result.sent,
       failedCount: result.failed,
-      message: `Announcement broadcasted to ${result.sent} users (${targetFilter.toUpperCase()} audience).`
+      message: `Announcement ${cleanImageUrl ? 'with image ' : ''}broadcasted to ${result.sent} users (${targetFilter.toUpperCase()} audience).`
     });
   });
 
