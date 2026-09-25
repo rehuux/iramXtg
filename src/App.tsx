@@ -107,6 +107,19 @@ export default function App() {
     fetchButtons();
   }, []);
 
+  // If the currently selected module was disabled by Admin, auto-switch to first available enabled button
+  useEffect(() => {
+    if (buttons.length > 0) {
+      const currentBtn = buttons.find((b) => b.id === selectedType);
+      if (currentBtn && currentBtn.enabled === false) {
+        const firstEnabled = buttons.find((b) => b.enabled !== false);
+        if (firstEnabled) {
+          setSelectedType(firstEnabled.id);
+        }
+      }
+    }
+  }, [buttons, selectedType]);
+
   const handleSearch = async (overrideType?: LookupType, overrideQuery?: string) => {
     const typeToUse = overrideType || selectedType;
     const queryToUse = overrideQuery || query;

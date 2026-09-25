@@ -1381,17 +1381,19 @@ function getJoinReplyKeyboard() {
 function getMainReplyKeyboard(user?: any) {
   const isAdmin = user && (String(user.id) === String(ADMIN_USER_ID) || user.role === 'admin');
   
-  // Get all registered buttons from buttonsStore (visible even if disabled)
-  const allButtons = Array.from(buttonsStore.values())
+  // Only display buttons that are currently enabled!
+  // Any button turned OFF by Admin is hidden from users completely.
+  const activeButtons = Array.from(buttonsStore.values())
+    .filter(btn => btn.enabled !== false)
     .sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
 
   const rows: Array<Array<{ text: string }>> = [];
   
   // Group buttons in pairs of 2
-  for (let i = 0; i < allButtons.length; i += 2) {
-    const row: Array<{ text: string }> = [{ text: allButtons[i].label }];
-    if (i + 1 < allButtons.length) {
-      row.push({ text: allButtons[i + 1].label });
+  for (let i = 0; i < activeButtons.length; i += 2) {
+    const row: Array<{ text: string }> = [{ text: activeButtons[i].label }];
+    if (i + 1 < activeButtons.length) {
+      row.push({ text: activeButtons[i + 1].label });
     }
     rows.push(row);
   }
@@ -2017,6 +2019,14 @@ function getStartCard(user: any, firstName = 'Agent', userId: number | string = 
   const refCount = user.referralCount || 0;
   const refBonus = refCount * REFERRAL_BONUS_PER_USER;
 
+  const activeButtons = Array.from(buttonsStore.values())
+    .filter(b => b.enabled !== false)
+    .sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
+
+  const lookupsSummary = activeButtons.length > 0
+    ? activeButtons.map(b => b.label).slice(0, 8).join('  •  ')
+    : 'No active services';
+
   return `🌐 *${BOT_NAME} Intelligence*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 👋 Welcome, *${firstName}*!
@@ -2029,8 +2039,7 @@ function getStartCard(user: any, firstName = 'Agent', userId: number | string = 
 👥 *Referral Bonus:* \`+${refBonus} daily credits\` (${refCount} invites)
 
 ⚡ *Available Lookups:*
-📱 Mobile  •  🚗 Vehicle  •  🗳️ Voter  •  🪪 Aadhaar
-🔥 LPG Gas  •  💳 UPI VPA  •  🏢 GST Intelligence
+${lookupsSummary}
 
 💡 *Refer & Earn:* Send /refer to earn +10 searches/day per friend
 ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2787,8 +2796,8 @@ Yahan se aap kisi bhi button ko direct Telegram se:
 
       const buttonsMsg = `🎛️ *BOT BUTTONS & APIS MASTER MANAGER*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ *Updated:* \`${btn.label}\` is now *${btn.enabled ? "🟢 ON (Active)" : "🔴 OFF (Disabled)"}*!
-Telegram keyboard auto-sync ho gaya hai.
+✅ *Updated:* \`${btn.label}\` is now *${btn.enabled ? "🟢 ON (Active - Visible to Users)" : "🔴 OFF (Disabled - Hidden from Users)"}*!
+${btn.enabled ? "Users ko ye button dikhega." : "Users ko ab ye button bilkul show nahi hoga."}
 
 👇 *Select another button or action:*`;
 
@@ -3816,7 +3825,7 @@ Ab group mein koi bhi message aayega (user chat, images, stickers, queries aur b
     }
     btn.enabled = !btn.enabled;
     await persistButton(btn);
-    await sendTelegramMessage(chatId, `✅ *BUTTON STATUS TOGGLED!*\n\n\`${btn.label}\` is now *${btn.enabled ? "🟢 ENABLED (ON)" : "🔴 DISABLED (OFF)"}*.\nBot keyboard has been updated.`, getMainReplyKeyboard(user));
+    await sendTelegramMessage(chatId, `✅ *BUTTON STATUS TOGGLED!*\n\n\`${btn.label}\` is now *${btn.enabled ? "🟢 ENABLED (ON - Visible to Users)" : "🔴 DISABLED (OFF - Hidden from Users)"}*.\n${btn.enabled ? "Users ko ab ye button show hoga." : "Users ko ab ye button bilkul show nahi hoga."}`, getMainReplyKeyboard(user));
     return;
   }
 
@@ -3844,7 +3853,7 @@ Ab group mein koi bhi message aayega (user chat, images, stickers, queries aur b
   // If verified, proceed with all bot commands
   if (text === "/start" || text === "🏠 Main Menu") {
     const card = getStartCard(user, msg.from?.first_name || 'Agent', userId);
-    await sendTelegramMessage(chatId, card, getMainReplyKeyboard());
+    await sendTelegramMessage(chatId, card, getMainReplyKeyboard(user));
     return;
   }
 
@@ -3855,19 +3864,18 @@ Ab group mein koi bhi message aayega (user chat, images, stickers, queries aur b
   }
 
   if (text === "/help" || text === "❓ Help" || text === "❓ Help Guide") {
+    const activeButtons = Array.from(buttonsStore.values())
+      .filter(b => b.enabled !== false)
+      .sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
+
+    const servicesList = activeButtons.length > 0
+      ? activeButtons.map(b => `• ${b.label}  ➜ \`${b.placeholder || b.example || 'Query'}\``).join('\n')
+      : `• _No OSINT lookup services currently active._`;
+
     const help = `📖 *${BOT_NAME} — Help & Command Guide*
 ══════════════════════════
 *AVAILABLE OSINT SERVICES:*
-• 📱 *Mobile Lookup*  ➜ 10-digit Mobile Number
-• 🚗 *Vehicle Lookup*  ➜ Vehicle Reg Number
-• 🪪 *Aadhaar Info*  ➜ 12-digit Aadhaar Number
-• 👨‍👩‍👧 *Family Tree*  ➜ Household Family Tree
-• 🗳️ *Voter Lookup*  ➜ Voter EPIC Number
-• 🔥 *LPG Gas Lookup*  ➜ Gas Connection / Phone
-• 💳 *UPI Lookup*  ➜ UPI VPA Handle
-• 🏢 *GST by Name*  ➜ Business Legal Name
-• 🪪 *GST by PAN*  ➜ 10-char PAN Number
-• 📄 *GST Details*  ➜ 15-char GSTIN Number
+${servicesList}
 
 *REWARDS & ACCOUNT:*
 • 👥 \`/refer\` ➜ Invite friends & earn *+10 searches daily*!
@@ -3876,7 +3884,7 @@ Ab group mein koi bhi message aayega (user chat, images, stickers, queries aur b
 • ✅ \`/verify\` ➜ Re-check channel status
 
 👇 *Tap any button below to start:*`;
-    await sendTelegramMessage(chatId, help, getMainReplyKeyboard());
+    await sendTelegramMessage(chatId, help, getMainReplyKeyboard(user));
     return;
   }
 
@@ -5975,8 +5983,16 @@ Tap *❌ Cancel* to return to main menu.`,
       text === "❓ Help Guide" ||
       text === "/help"
     ) {
+      const activeButtons = Array.from(buttonsStore.values())
+        .filter(b => b.enabled !== false)
+        .sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
+
+      const servicesList = activeButtons.length > 0
+        ? activeButtons.map(b => `  • ${b.label}`).join('\n')
+        : `  • No services active currently`;
+
       return res.json({
-        reply: `📖 *${BOT_NAME} Help Guide*\n══════════════════════════\nClick any button below or send commands:\n  📱 /num2 <10-digit mobile>\n  🚗 /vehicle <reg_number>\n  🗳️ /voter <epic_id>\n  🪪 /aadhar2info <12-digit aadhaar>\n  👪 /aadhar2family <12-digit aadhaar>\n  🔥 /lpg <phone_or_id>\n  💳 /upi2num <upi_id>\n  🏢 /gst2name <business_name>\n  🪪 /gst2pan <pan_number>\n  📄 /gst <gstin>\n  👥 /refer ➜ Refer friends (+10 extra credit daily)\n  💎 /redeem <code>\n  📊 /stats\n  ✅ /verify`,
+        reply: `📖 *${BOT_NAME} Help Guide*\n══════════════════════════\nAvailable Services:\n${servicesList}\n\nAccount & Commands:\n  👥 /refer ➜ Refer friends (+10 extra credit daily)\n  💎 /redeem <code>\n  📊 /stats\n  ✅ /verify`,
         awaitingInput: false,
       });
     }
@@ -6159,8 +6175,16 @@ Tap *❌ Cancel* to return to main menu.`,
     }
 
     if (text === "/help") {
+      const activeButtons = Array.from(buttonsStore.values())
+        .filter(b => b.enabled !== false)
+        .sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
+
+      const servicesList = activeButtons.length > 0
+        ? activeButtons.map(b => `  • ${b.label}`).join('\n')
+        : `  • No services active currently`;
+
       return res.json({
-        reply: `📖 *${BOT_NAME} Help Guide*\n══════════════════════════\nClick any button below or send commands:\n  📱 /num2 <10-digit mobile>\n  🚗 /vehicle <reg_number>\n  🗳️ /voter <epic_id>\n  🪪 /aadhar2info <12-digit aadhaar>\n  👪 /aadhar2family <12-digit aadhaar>\n  🔥 /lpg <phone_or_id>\n  💳 /upi2num <upi_id>\n  🏢 /gst2name <business_name>\n  🪪 /gst2pan <pan_number>\n  📄 /gst <gstin>\n  👥 /refer ➜ Refer friends (+10 extra credit daily)\n  💎 /redeem <code>\n  📊 /stats\n  ✅ /verify`,
+        reply: `📖 *${BOT_NAME} Help Guide*\n══════════════════════════\nAvailable Services:\n${servicesList}\n\nAccount & Commands:\n  👥 /refer ➜ Refer friends (+10 extra credit daily)\n  💎 /redeem <code>\n  📊 /stats\n  ✅ /verify`,
         awaitingInput: false,
       });
     }

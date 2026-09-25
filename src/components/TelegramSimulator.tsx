@@ -276,28 +276,37 @@ interface SimButton {
       '📄 GST Details': 'gst',
     };
 
-    // Update base buttons with dynamic label & enabled status (all buttons remain visible)
-    const processedBaseButtons = defaultButtons.map((btn) => {
+    // Filter out buttons that are turned OFF by Admin: do NOT show them to users at all!
+    const processedBaseButtons: SimButton[] = [];
+    defaultButtons.forEach((btn) => {
       const btnId = lookupMap[btn.text];
-      if (!btnId) return btn;
+      if (!btnId) {
+        processedBaseButtons.push(btn);
+        return;
+      }
       const match = dynamicButtons.find((b) => b.id === btnId);
-      if (!match) return btn;
-      return {
-        ...btn,
-        label: match.enabled ? match.label : `${match.label} [OFF]`,
-        text: match.label,
-        disabled: !match.enabled,
-      };
+      if (match) {
+        // If button is turned off by admin, hide it completely!
+        if (match.enabled === false) return;
+        processedBaseButtons.push({
+          ...btn,
+          label: match.label,
+          text: match.label,
+          disabled: false,
+        });
+      } else {
+        processedBaseButtons.push(btn);
+      }
     });
 
-    // Append custom buttons (all visible)
+    // Append custom buttons (ONLY enabled ones)
     const customButtons = dynamicButtons
-      .filter((b) => b.isCustom)
+      .filter((b) => b.isCustom && b.enabled !== false)
       .map((b) => ({
-        label: b.enabled ? b.label : `${b.label} [OFF]`,
+        label: b.label,
         text: b.label,
         primary: false,
-        disabled: !b.enabled,
+        disabled: false,
       }));
 
     return [...processedBaseButtons, ...customButtons];

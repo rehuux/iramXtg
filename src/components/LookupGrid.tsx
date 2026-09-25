@@ -129,9 +129,10 @@ export const LookupGrid: React.FC<LookupGridProps> = ({ selectedType, onSelectTy
     }
   };
 
-  // If dynamic buttons are supplied, merge with base options or render buttons (all visible)
+  // If dynamic buttons are supplied, filter out any buttons turned OFF by Admin so users never see them!
   const displayOptions: LookupOption[] = buttons && buttons.length > 0
     ? buttons
+        .filter((b) => b.enabled !== false)
         .map((b) => {
           const matched = LOOKUP_OPTIONS.find((o) => o.id === b.id);
           return {
@@ -142,55 +143,53 @@ export const LookupGrid: React.FC<LookupGridProps> = ({ selectedType, onSelectTy
             example: b.example || (matched ? matched.example : ''),
             description: b.description || (matched ? matched.description : ''),
             category: (b.category as any) || 'custom',
-            enabled: b.enabled !== false,
+            enabled: true,
             apiUrl: b.apiUrl,
             isCustom: b.isCustom,
           };
         })
     : LOOKUP_OPTIONS;
 
+  if (displayOptions.length === 0) {
+    return (
+      <div className="p-8 rounded-2xl border border-slate-800 bg-slate-900/50 text-center">
+        <Ban className="w-8 h-8 text-amber-400 mx-auto mb-2 opacity-80" />
+        <p className="text-sm font-semibold text-slate-200">No Services Currently Available</p>
+        <p className="text-xs text-slate-400 mt-1">All lookup modules have been temporarily turned off by Admin.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
       {displayOptions.map((item) => {
         const isSelected = selectedType === item.id;
-        const isDisabled = item.enabled === false;
         return (
           <button
             key={item.id}
             id={`tab-${item.id}`}
             onClick={() => onSelectType(item.id)}
             className={`p-3 rounded-xl border text-left transition relative overflow-hidden group cursor-pointer ${
-              isDisabled
-                ? isSelected
-                  ? 'bg-rose-950/20 border-rose-500/80 text-rose-200'
-                  : 'bg-slate-900/40 hover:bg-slate-900/60 border-rose-900/30 text-slate-500 hover:text-slate-400'
-                : isSelected
-                  ? 'bg-indigo-600/15 border-indigo-500 text-indigo-200 shadow-md shadow-indigo-500/10'
-                  : 'bg-slate-900/60 hover:bg-slate-800/80 border-slate-800 text-slate-400 hover:text-slate-200'
+              isSelected
+                ? 'bg-indigo-600/15 border-indigo-500 text-indigo-200 shadow-md shadow-indigo-500/10'
+                : 'bg-slate-900/60 hover:bg-slate-800/80 border-slate-800 text-slate-400 hover:text-slate-200'
             }`}
           >
             {isSelected && (
-              <div className={`absolute top-0 right-0 w-2 h-2 rounded-full m-2 ${isDisabled ? 'bg-rose-400' : 'bg-indigo-400'}`} />
+              <div className="absolute top-0 right-0 w-2 h-2 rounded-full m-2 bg-indigo-400" />
             )}
             <div className="flex items-center justify-between mb-2">
               <div className={`p-2 rounded-lg inline-flex ${
-                isDisabled
-                  ? isSelected ? 'bg-rose-900/30 text-rose-300' : 'bg-slate-800/80 text-rose-400/70'
-                  : isSelected ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-800 text-slate-400 group-hover:text-slate-200'
+                isSelected ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-800 text-slate-400 group-hover:text-slate-200'
               }`}>
                 {getIcon(item.icon)}
               </div>
-              {isDisabled && (
-                <span className="text-[9px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 uppercase">
-                  OFF
-                </span>
-              )}
             </div>
             <div className="font-semibold text-xs sm:text-sm text-slate-100 mb-0.5 truncate flex items-center gap-1">
               <span>{item.title}</span>
             </div>
             <div className="text-[11px] text-slate-400 line-clamp-1">
-              {isDisabled ? 'Disabled by admin' : item.placeholder.replace('Enter ', '')}
+              {item.placeholder.replace('Enter ', '')}
             </div>
           </button>
         );
