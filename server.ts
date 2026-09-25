@@ -246,6 +246,7 @@ function addAuditLog(entry: Omit<AuditLogEntry, 'id' | 'timestamp'>) {
   if (auditLogs.length > 250) {
     auditLogs.pop();
   }
+  persistAuditLogToDb(log).catch(() => {});
 }
 
 let MAINTENANCE_MODE: boolean = false;
@@ -259,6 +260,7 @@ interface RedeemCodeRecord {
   totalUses: number;
   createdAt: string;
   usedBy: string[];
+  createdBy?: string;
 }
 
 const usersStore = new Map<string, UserRecord>();
@@ -350,10 +352,22 @@ async function recordReferralInDb(referrerId: string, referredId: string): Promi
   }
 }
 
-// ── DYNAMIC BUTTONS SUPABASE PERSISTENCE ──
+// ── DYNAMIC BUTTONS & DELETED BUTTONS SUPABASE PERSISTENCE ──
+const deletedButtonIds = new Set<string>();
+
 async function loadButtonsFromSupabase(): Promise<void> {
   if (!supabase) return;
   try {
+    // 1. Load permanently deleted button IDs so deleted standard buttons stay deleted across restarts
+    const { data: delData } = await supabase.from('bot_deleted_buttons').select('id');
+    if (delData && Array.isArray(delData)) {
+      for (const row of delData) {
+        deletedButtonIds.add(row.id);
+        buttonsStore.delete(row.id);
+      }
+    }
+
+    // 2. Load active buttons from Supabase
     const { data, error } = await supabase.from('bot_buttons').select('*').order('sort_order', { ascending: true });
     if (error) {
       console.warn('⚠️ Supabase bot_buttons fetch:', error.message);
@@ -361,6 +375,7 @@ async function loadButtonsFromSupabase(): Promise<void> {
     }
     if (data && Array.isArray(data) && data.length > 0) {
       for (const row of data) {
+        if (deletedButtonIds.has(row.id)) continue;
         buttonsStore.set(row.id, {
           id: row.id,
           label: row.label,
@@ -375,7 +390,7 @@ async function loadButtonsFromSupabase(): Promise<void> {
           dailyLimit: row.daily_limit !== undefined ? Number(row.daily_limit) : undefined,
         });
       }
-      console.log(`📦 Loaded ${data.length} dynamic buttons & APIs from Supabase bot_buttons.`);
+      console.log(`📦 Loaded ${buttonsStore.size} active buttons & APIs from Supabase bot_buttons.`);
     }
   } catch (err: any) {
     console.warn('⚠️ Error loading bot_buttons from Supabase:', err?.message || err);
@@ -408,11 +423,200 @@ async function persistButton(btn: BotButton): Promise<void> {
 }
 
 async function deleteButtonFromDb(buttonId: string): Promise<void> {
+  deletedButtonIds.add(buttonId);
+  buttonsStore.delete(buttonId);
   if (!supabase) return;
   try {
     await supabase.from('bot_buttons').delete().eq('id', buttonId);
+    await supabase.from('bot_deleted_buttons').upsert({ id: buttonId, deleted_at: new Date().toISOString() });
   } catch (err: any) {
     console.warn(`⚠️ Supabase delete exception for button ${buttonId}:`, err?.message || err);
+  }
+}
+
+async function restoreDefaultButtonsInDb(): Promise<void> {
+  deletedButtonIds.clear();
+  if (supabase) {
+    try {
+      await supabase.from('bot_deleted_buttons').delete().neq('id', '');
+    } catch (e: any) {
+      console.warn('Failed to clear bot_deleted_buttons:', e.message);
+    }
+  }
+  DEFAULT_BUTTONS.forEach(btn => {
+    if (!buttonsStore.has(btn.id)) {
+      buttonsStore.set(btn.id, { ...btn });
+      persistButton(btn);
+    }
+  });
+}
+
+// ── VOUCHERS SUPABASE PERSISTENCE ──
+async function loadVouchersFromSupabase(): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { data, error } = await supabase.from('bot_vouchers').select('*');
+    if (error) {
+      console.warn('⚠️ Supabase bot_vouchers fetch:', error.message);
+      return;
+    }
+    if (data && Array.isArray(data) && data.length > 0) {
+      for (const row of data) {
+        redeemCodes.set(row.code, {
+          code: row.code,
+          days: row.days || 7,
+          role: row.role || 'premium',
+          usesLeft: row.uses_left !== undefined ? row.uses_left : 1,
+          totalUses: row.total_uses !== undefined ? row.total_uses : 1,
+          createdAt: row.created_at || new Date().toISOString(),
+          createdBy: row.created_by || 'admin',
+          usedBy: Array.isArray(row.used_by) ? row.used_by : [],
+        });
+      }
+      console.log(`🔑 Loaded ${data.length} vouchers from Supabase bot_vouchers.`);
+    }
+  } catch (err: any) {
+    console.warn('⚠️ Error loading bot_vouchers from Supabase:', err?.message || err);
+  }
+}
+
+async function persistVoucherToDb(voucher: RedeemCodeRecord): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.from('bot_vouchers').upsert({
+      code: voucher.code,
+      days: voucher.days,
+      role: voucher.role,
+      uses_left: voucher.usesLeft,
+      total_uses: voucher.totalUses || 1,
+      created_by: voucher.createdBy || 'admin',
+      used_by: voucher.usedBy || [],
+      created_at: voucher.createdAt || new Date().toISOString(),
+    }, { onConflict: 'code' });
+  } catch (err: any) {
+    console.warn('⚠️ Supabase persist voucher exception:', err?.message || err);
+  }
+}
+
+async function deleteVoucherFromDb(code: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.from('bot_vouchers').delete().eq('code', code);
+  } catch (err: any) {
+    console.warn('⚠️ Supabase delete voucher exception:', err?.message || err);
+  }
+}
+
+// ── AUDIT LOGS SUPABASE PERSISTENCE ──
+async function persistAuditLogToDb(log: AuditLogEntry): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.from('bot_search_logs').insert({
+      id: log.id,
+      user_id: String(log.userId),
+      username: log.username || '',
+      service: log.service,
+      query: log.query,
+      source: log.source,
+      status: log.status,
+      duration_ms: log.durationMs || 0,
+      details: log.details || '',
+      created_at: log.timestamp,
+    });
+  } catch (err: any) {
+    // Non-blocking log persistence
+  }
+}
+
+async function loadAuditLogsFromSupabase(): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { data, error } = await supabase
+      .from('bot_search_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (!error && data && Array.isArray(data)) {
+      for (const row of data.reverse()) {
+        if (!auditLogs.some(l => l.id === row.id)) {
+          auditLogs.unshift({
+            id: row.id,
+            timestamp: row.created_at,
+            source: row.source || 'telegram_dm',
+            userId: row.user_id,
+            username: row.username || '',
+            service: row.service,
+            query: row.query,
+            status: row.status,
+            durationMs: row.duration_ms || 0,
+            details: row.details || '',
+          });
+        }
+      }
+      console.log(`📋 Loaded ${data.length} audit logs from Supabase bot_search_logs.`);
+    }
+  } catch (err: any) {
+    console.warn('⚠️ Error loading bot_search_logs from Supabase:', err?.message || err);
+  }
+}
+
+// ── BROADCASTS SUPABASE PERSISTENCE ──
+async function persistBroadcastToDb(broadcast: {
+  message: string;
+  photoUrl?: string;
+  sentCount: number;
+  failedCount: number;
+  createdBy?: string;
+}): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.from('bot_broadcasts').insert({
+      message: broadcast.message,
+      photo_url: broadcast.photoUrl || null,
+      sent_count: broadcast.sentCount,
+      failed_count: broadcast.failedCount,
+      created_by: broadcast.createdBy || 'admin',
+      created_at: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.warn('⚠️ Supabase persist broadcast exception:', err?.message || err);
+  }
+}
+
+// ── SETTINGS SUPABASE PERSISTENCE ──
+async function loadSettingsFromSupabase(): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { data } = await supabase.from('bot_settings').select('*');
+    if (data && Array.isArray(data)) {
+      for (const row of data) {
+        if (row.key === 'daily_limit' && typeof row.value === 'number') {
+          FREE_DAILY_LIMIT = row.value;
+        } else if (row.key === 'auto_delete_delay' && typeof row.value === 'number') {
+          AUTO_DELETE_DELAY_MS = row.value;
+        } else if (row.key === 'bot_active' && typeof row.value === 'boolean') {
+          isBotActive = row.value;
+        } else if (row.key === 'maintenance_mode' && typeof row.value === 'boolean') {
+          MAINTENANCE_MODE = row.value;
+        }
+      }
+      console.log('⚙️ Loaded bot system settings from Supabase bot_settings.');
+    }
+  } catch (err: any) {
+    console.warn('⚠️ Error loading bot_settings from Supabase:', err?.message || err);
+  }
+}
+
+async function persistSettingToDb(key: string, value: any): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.from('bot_settings').upsert({
+      key,
+      value,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'key' });
+  } catch (err: any) {
+    console.warn(`⚠️ Failed to persist setting ${key} to Supabase:`, err?.message || err);
   }
 }
 
@@ -1081,6 +1285,13 @@ async function broadcastTelegramMessage(
     }
   }
 
+  persistBroadcastToDb({
+    message: text,
+    photoUrl: imageUrl,
+    sentCount: sent,
+    failedCount: failed,
+  }).catch(() => {});
+
   return { sent, failed };
 }
 
@@ -1097,6 +1308,7 @@ async function broadcastRedeemCode(days: number, adminName = 'Admin'): Promise<{
     usedBy: [],
   };
   redeemCodes.set(code, record);
+  persistVoucherToDb(record).catch(() => {});
 
   const broadcastMsg = `🎁 *EXCLUSIVE REDEEM CODE DROP!*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2839,6 +3051,9 @@ ${btn.enabled ? "Users ko ye button dikhega." : "Users ko ab ye button bilkul sh
         ],
         [
           { text: "✏️ Change API URL", callback_data: `admin_btn_editapi_${btn.id}` },
+          { text: "🗑️ Delete Button", callback_data: `admin_btn_delete_${btn.id}` }
+        ],
+        [
           { text: "🔙 Back to List", callback_data: "admin_buttons_list" }
         ]
       ];
@@ -2848,6 +3063,26 @@ ${btn.enabled ? "Users ko ye button dikhega." : "Users ko ab ye button bilkul sh
       } else {
         await sendTelegramMessage(chatId, infoCard, { inline_keyboard: actionRows });
       }
+      return;
+    }
+
+    if (data.startsWith("admin_btn_delete_")) {
+      const targetBtnId = data.replace("admin_btn_delete_", "");
+      const btn = buttonsStore.get(targetBtnId);
+      if (!btn) {
+        await answerTelegramCallbackQuery(cqId, "Button not found!", true);
+        return;
+      }
+      const oldLabel = btn.label;
+      await deleteButtonFromDb(targetBtnId);
+      await answerTelegramCallbackQuery(cqId, `Button ${oldLabel} deleted!`, true);
+      await sendTelegramMessage(chatId, `🗑️ *BUTTON DELETED PERMANENTLY!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+• 🆔 *Button ID:* \`${targetBtnId}\`
+• 🏷️ *Label:* \`${oldLabel}\`
+
+Ye button Telegram bot aur Web UI dono se permanently remove ho gaya hai.
+*(Wapas restore karne ke liye send /restoredefaults)*`, getMainReplyKeyboard(user));
       return;
     }
 
@@ -3850,6 +4085,34 @@ Ab group mein koi bhi message aayega (user chat, images, stickers, queries aur b
     return;
   }
 
+  if (isAdmin && (text.startsWith("/delbutton ") || text.startsWith("/deletebutton "))) {
+    const btnId = text.replace(/\/deletebutton\s+|\/delbutton\s+/, "").trim();
+    const btn = buttonsStore.get(btnId);
+    if (!btn) {
+      await sendTelegramMessage(chatId, `❌ Button with ID \`${btnId}\` not found.\nSend \`/buttons\` to inspect valid button IDs.`, getMainReplyKeyboard(user));
+      return;
+    }
+    const oldLabel = btn.label;
+    await deleteButtonFromDb(btnId);
+    await sendTelegramMessage(chatId, `🗑️ *BUTTON DELETED PERMANENTLY!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+• 🆔 *Button ID:* \`${btnId}\`
+• 🏷️ *Label:* \`${oldLabel}\`
+
+Ye button Telegram bot aur Web UI dono se permanently delete ho gaya hai.
+*(Wapas restore karne ke liye send /restoredefaults)*`, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (isAdmin && (text === "/restoredefaults" || text === "/restore_buttons" || text === "/restorebuttons")) {
+    await restoreDefaultButtonsInDb();
+    await sendTelegramMessage(chatId, `🔄 *DEFAULT BUTTONS RESTORED!*
+━━━━━━━━━━━━━━━━━━━━━━━━━
+Sabhi original default lookup buttons restore kar diye gaye hain.
+Telegram bot keyboard & website interface auto-synced!`, getMainReplyKeyboard(user));
+    return;
+  }
+
   // If verified, proceed with all bot commands
   if (text === "/start" || text === "🏠 Main Menu") {
     const card = getStartCard(user, msg.from?.first_name || 'Agent', userId);
@@ -4782,9 +5045,12 @@ function clean(str: string): string {
 
 // ── EXPRESS APP ──
 async function startServer() {
-  // Restore persistent users & buttons from Supabase if configured
+  // Restore persistent settings, users, buttons, vouchers & audit logs from Supabase
+  await loadSettingsFromSupabase();
   await loadUsersFromSupabase();
   await loadButtonsFromSupabase();
+  await loadVouchersFromSupabase();
+  await loadAuditLogsFromSupabase();
 
   const app = express();
   app.use(cors());
@@ -4890,6 +5156,7 @@ async function startServer() {
     voucher.usedBy.push('web_client');
     const user = getUser('web_client');
     user.role = 'premium';
+    persistVoucherToDb(voucher).catch(() => {});
 
     res.json({
       success: true,
@@ -4914,7 +5181,7 @@ async function startServer() {
   });
 
   // Admin: Generate redeem codes with custom days
-  app.post('/api/admin/codes/generate', (req, res) => {
+  app.post('/api/admin/codes/generate', async (req, res) => {
     const { count = 1, days = 7, uses = 1, role = 'premium' } = req.body;
     const newCodes: RedeemCodeRecord[] = [];
     const numDays = Math.max(1, Number(days) || 7);
@@ -4933,6 +5200,7 @@ async function startServer() {
         usedBy: [],
       };
       redeemCodes.set(code, record);
+      await persistVoucherToDb(record);
       newCodes.push(record);
     }
 
@@ -4955,23 +5223,25 @@ async function startServer() {
   });
 
   // Admin: Delete / revoke single redeem code
-  app.delete('/api/admin/codes/:code', (req, res) => {
+  app.delete('/api/admin/codes/:code', async (req, res) => {
     const { code } = req.params;
     if (!code) return res.status(400).json({ success: false, error: 'Code is required' });
     const upperCode = code.toUpperCase().trim();
     if (redeemCodes.has(upperCode)) {
       redeemCodes.delete(upperCode);
+      await deleteVoucherFromDb(upperCode);
       return res.json({ success: true, message: `Voucher ${upperCode} revoked and deleted.` });
     }
     return res.status(404).json({ success: false, error: 'Code not found' });
   });
 
   // Admin: Purge all claimed / exhausted redeem codes
-  app.post('/api/admin/codes/purge-claimed', (req, res) => {
+  app.post('/api/admin/codes/purge-claimed', async (req, res) => {
     let purged = 0;
     for (const [code, voucher] of redeemCodes.entries()) {
       if (voucher.usesLeft <= 0) {
         redeemCodes.delete(code);
+        await deleteVoucherFromDb(code);
         purged++;
       }
     }
@@ -5077,16 +5347,37 @@ async function startServer() {
     res.json({ success: true, button: newBtn, message: `New button ${newBtn.label} added successfully!` });
   });
 
-  // DELETE /api/admin/buttons/:id - delete a custom button
+  // DELETE /api/admin/buttons/:id - delete ANY button (built-in or custom)
   app.delete('/api/admin/buttons/:id', async (req, res) => {
     const { id } = req.params;
     const btn = buttonsStore.get(id);
     if (!btn) {
       return res.status(404).json({ success: false, error: 'Button not found' });
     }
-    buttonsStore.delete(id);
     await deleteButtonFromDb(id);
-    res.json({ success: true, message: `Button ${btn.label} deleted successfully.` });
+    res.json({ success: true, message: `Button ${btn.label} deleted permanently from Bot & Web.` });
+  });
+
+  // POST /api/admin/buttons/restore-defaults - restore default built-in buttons
+  app.post('/api/admin/buttons/restore-defaults', async (req, res) => {
+    await restoreDefaultButtonsInDb();
+    const buttons = Array.from(buttonsStore.values()).sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99));
+    res.json({ success: true, buttons, message: 'All default service buttons restored successfully!' });
+  });
+
+  // GET /api/admin/broadcasts - get past broadcasts from Supabase
+  app.get('/api/admin/broadcasts', async (req, res) => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.from('bot_broadcasts').select('*').order('created_at', { ascending: false }).limit(50);
+        if (!error && data) {
+          return res.json({ success: true, broadcasts: data });
+        }
+      } catch (err: any) {
+        console.warn('Failed to fetch broadcasts from Supabase:', err.message);
+      }
+    }
+    res.json({ success: true, broadcasts: [] });
   });
 
   // ── USER MANAGEMENT & DM ACCESS ADMIN ENDPOINTS ──
@@ -5334,6 +5625,9 @@ async function startServer() {
       const match = String(newGroupUrl).match(/t\.me\/([a-zA-Z0-9_]+)/);
       if (match) OFFICIAL_GROUP_USERNAME = `@${match[1]}`;
     }
+    persistSettingToDb('daily_limit', FREE_DAILY_LIMIT).catch(() => {});
+    persistSettingToDb('auto_delete_delay', AUTO_DELETE_DELAY_MS).catch(() => {});
+    persistSettingToDb('maintenance_mode', MAINTENANCE_MODE).catch(() => {});
     res.json({
       success: true,
       message: 'System settings updated successfully!',
@@ -5366,8 +5660,34 @@ async function startServer() {
     }
   });
 
-  // Admin: Real-time Audit Logs & Query Feed
-  app.get('/api/admin/logs', (req, res) => {
+  // Admin: Real-time Audit Logs & Query Feed (Synced with Supabase bot_search_logs)
+  app.get('/api/admin/logs', async (req, res) => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('bot_search_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100);
+        if (!error && data && Array.isArray(data)) {
+          const dbLogs = data.map((d: any) => ({
+            id: d.id,
+            timestamp: d.created_at,
+            source: d.source || 'telegram_dm',
+            userId: d.user_id,
+            username: d.username,
+            service: d.service,
+            query: d.query,
+            status: d.status,
+            durationMs: d.duration_ms || 0,
+            details: d.details,
+          }));
+          return res.json({ success: true, logs: dbLogs, total: dbLogs.length });
+        }
+      } catch (err: any) {
+        console.warn('Failed to query bot_search_logs from Supabase:', err.message);
+      }
+    }
     res.json({
       success: true,
       logs: auditLogs,
@@ -5375,8 +5695,15 @@ async function startServer() {
     });
   });
 
-  app.post('/api/admin/logs/clear', (req, res) => {
+  app.post('/api/admin/logs/clear', async (req, res) => {
     auditLogs.length = 0;
+    if (supabase) {
+      try {
+        await supabase.from('bot_search_logs').delete().neq('id', '');
+      } catch (err: any) {
+        console.warn('Failed to clear bot_search_logs in Supabase:', err.message);
+      }
+    }
     res.json({ success: true, message: 'Audit logs cleared successfully.' });
   });
 

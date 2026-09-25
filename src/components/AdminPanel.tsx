@@ -40,6 +40,7 @@ import {
   Zap,
   SlidersHorizontal,
   X,
+  RotateCcw,
   Image as ImageIcon,
   UploadCloud,
   Link as LinkIcon
@@ -499,8 +500,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
   const handleDeleteButton = (btn: BotButton) => {
     setConfirmModal({
       isOpen: true,
-      title: 'Delete Custom Service Button',
-      message: `Are you sure you want to delete "${btn.label}"? This will remove it from both the Telegram bot and the Web UI.`,
+      title: `Delete "${btn.label}" Button`,
+      message: `Are you sure you want to permanently delete "${btn.label}" (${btn.id})? This will remove it from both the Telegram bot keyboard and the Web UI.`,
       confirmLabel: 'Delete Button',
       confirmStyle: 'danger',
       onConfirm: async () => {
@@ -510,13 +511,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
           const data = await res.json();
           if (data.success) {
             setButtons((prev) => prev.filter((b) => b.id !== btn.id));
-            setButtonActionMsg({ type: 'success', text: `Button "${btn.label}" deleted.` });
+            setButtonActionMsg({ type: 'success', text: `Button "${btn.label}" permanently deleted from Bot & Web.` });
             if (onButtonsUpdated) onButtonsUpdated();
           } else {
-            setButtonActionMsg({ type: 'error', text: data.error || 'Failed to delete.' });
+            setButtonActionMsg({ type: 'error', text: data.error || 'Failed to delete button.' });
           }
         } catch (e: any) {
           setButtonActionMsg({ type: 'error', text: e.message || 'Error deleting button.' });
+        }
+      },
+    });
+  };
+
+  const handleRestoreDefaults = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Restore Default Service Buttons',
+      message: 'Are you sure you want to restore all original built-in lookup buttons? Any deleted default modules will be recreated.',
+      confirmLabel: 'Restore Defaults',
+      confirmStyle: 'primary',
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          const res = await fetch('/api/admin/buttons/restore-defaults', { method: 'POST' });
+          const data = await res.json();
+          if (data.success && data.buttons) {
+            setButtons(data.buttons);
+            setButtonActionMsg({ type: 'success', text: 'All default service buttons restored successfully!' });
+            if (onButtonsUpdated) onButtonsUpdated();
+          }
+        } catch (e: any) {
+          setButtonActionMsg({ type: 'error', text: e.message || 'Failed to restore default buttons.' });
         }
       },
     });
@@ -566,9 +591,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
     });
   };
 
-  const sqlCode = `-- SQL Commands to create bot_buttons & bot_users tables in Supabase
--- Run this in your Supabase SQL Editor:
+  const sqlCode = `-- =========================================================
+-- COMPLETE SUPABASE SQL SCHEMA FOR IRAMX OSINT TELEGRAM BOT
+-- Copy & Run this in your Supabase SQL Editor:
+-- =========================================================
 
+-- 1. Users, Credits & DM Access Table
+CREATE TABLE IF NOT EXISTS bot_users (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+  username TEXT,
+  first_name TEXT,
+  role TEXT DEFAULT 'free',
+  daily_searches INT DEFAULT 0,
+  total_searches INT DEFAULT 0,
+  channel_verified BOOLEAN DEFAULT false,
+  referred_by TEXT,
+  allow_dm BOOLEAN DEFAULT false,
+  last_search_date TEXT,
+  last_active TEXT,
+  referral_count INT DEFAULT 0,
+  referral_bonus_daily INT DEFAULT 0,
+  custom_daily_limit INT DEFAULT 0,
+  daily_button_usage JSONB DEFAULT '{}',
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 2. Dynamic Bot Buttons & Custom APIs Table
 CREATE TABLE IF NOT EXISTS bot_buttons (
   id TEXT PRIMARY KEY,
   label TEXT NOT NULL,
@@ -584,30 +633,90 @@ CREATE TABLE IF NOT EXISTS bot_buttons (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Users & DM Access Table
-CREATE TABLE IF NOT EXISTS bot_users (
-  user_id TEXT PRIMARY KEY,
-  role TEXT DEFAULT 'free',
-  daily_searches INT DEFAULT 0,
-  total_searches INT DEFAULT 0,
-  allow_dm BOOLEAN DEFAULT false,
-  last_search_date TEXT,
-  referral_count INT DEFAULT 0,
-  daily_button_usage JSONB DEFAULT '{}',
+-- 3. Deleted Buttons Tracking Table (Ensures deleted buttons stay deleted across restarts)
+CREATE TABLE IF NOT EXISTS bot_deleted_buttons (
+  id TEXT PRIMARY KEY,
+  deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 4. Vouchers / VIP Redeem Codes Table
+CREATE TABLE IF NOT EXISTS bot_vouchers (
+  code TEXT PRIMARY KEY,
+  days INT DEFAULT 7,
+  role TEXT DEFAULT 'premium',
+  uses_left INT DEFAULT 1,
+  total_uses INT DEFAULT 1,
+  created_by TEXT DEFAULT 'admin',
+  used_by JSONB DEFAULT '[]',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 5. Search / Query Audit Logs Table (Live query history)
+CREATE TABLE IF NOT EXISTS bot_search_logs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+  username TEXT,
+  service TEXT,
+  query TEXT,
+  source TEXT,
+  status TEXT,
+  duration_ms INT DEFAULT 0,
+  details TEXT DEFAULT '',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 6. Announcements & Broadcast History Table
+CREATE TABLE IF NOT EXISTS bot_broadcasts (
+  id BIGSERIAL PRIMARY KEY,
+  message TEXT,
+  photo_url TEXT,
+  sent_count INT DEFAULT 0,
+  failed_count INT DEFAULT 0,
+  created_by TEXT DEFAULT 'admin',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 7. Bot System Settings Table (Daily limit, auto-delete, maintenance)
+CREATE TABLE IF NOT EXISTS bot_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Enable Row Level Security (RLS)
-ALTER TABLE bot_buttons ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bot_users ENABLE ROW LEVEL SECURITY;
+-- 8. Referrals Table
+CREATE TABLE IF NOT EXISTS bot_referrals (
+  id BIGSERIAL PRIMARY KEY,
+  referrer_id TEXT,
+  referred_id TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
-CREATE POLICY "Public Read Bot Buttons" ON bot_buttons FOR SELECT USING (true);
-CREATE POLICY "Allow All Bot Buttons" ON bot_buttons FOR ALL USING (true);
-CREATE POLICY "Public Read Bot Users" ON bot_users FOR SELECT USING (true);
-CREATE POLICY "Allow All Bot Users" ON bot_users FOR ALL USING (true);
-
+-- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_bot_users_user_id ON bot_users (user_id);
 CREATE INDEX IF NOT EXISTS idx_bot_buttons_enabled ON bot_buttons (enabled);
 CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
+CREATE INDEX IF NOT EXISTS idx_bot_search_logs_user_id ON bot_search_logs (user_id);
+CREATE INDEX IF NOT EXISTS idx_bot_search_logs_created_at ON bot_search_logs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bot_vouchers_uses ON bot_vouchers (uses_left);
+
+-- Enable Row Level Security (RLS)
+ALTER TABLE bot_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_buttons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_deleted_buttons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_vouchers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_search_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_broadcasts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_referrals ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow All bot_users" ON bot_users FOR ALL USING (true);
+CREATE POLICY "Allow All bot_buttons" ON bot_buttons FOR ALL USING (true);
+CREATE POLICY "Allow All bot_deleted_buttons" ON bot_deleted_buttons FOR ALL USING (true);
+CREATE POLICY "Allow All bot_vouchers" ON bot_vouchers FOR ALL USING (true);
+CREATE POLICY "Allow All bot_search_logs" ON bot_search_logs FOR ALL USING (true);
+CREATE POLICY "Allow All bot_broadcasts" ON bot_broadcasts FOR ALL USING (true);
+CREATE POLICY "Allow All bot_settings" ON bot_settings FOR ALL USING (true);
+CREATE POLICY "Allow All bot_referrals" ON bot_referrals FOR ALL USING (true);
 `;
 
   const copySqlToClipboard = () => {
@@ -1531,6 +1640,14 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
 
           <div className="flex items-center gap-2">
             <button
+              onClick={handleRestoreDefaults}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-medium transition cursor-pointer"
+              title="Restore all default built-in buttons if any were deleted"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-sky-400" />
+              <span>Restore Defaults</span>
+            </button>
+            <button
               onClick={() => setShowSqlModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-medium transition cursor-pointer"
             >
@@ -1906,15 +2023,13 @@ CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
                             <span>Test API</span>
                           </button>
 
-                          {btn.isCustom && (
-                            <button
-                              onClick={() => handleDeleteButton(btn)}
-                              className="p-1.5 rounded-lg bg-rose-900/20 hover:bg-rose-900/40 text-rose-400 hover:text-rose-300 border border-rose-800/40 text-xs transition cursor-pointer"
-                              title="Delete custom button"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                          <button
+                            onClick={() => handleDeleteButton(btn)}
+                            className="p-1.5 rounded-lg bg-rose-900/20 hover:bg-rose-900/40 text-rose-400 hover:text-rose-300 border border-rose-800/40 text-xs transition cursor-pointer"
+                            title={`Delete ${btn.label} button`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       )}
                     </div>
