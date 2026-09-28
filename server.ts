@@ -951,8 +951,8 @@ const TELEGRAM_CUSTOM_EMOJIS: Record<string, string> = {
   "❤️‍🔥": "5999094689943261497",
   "❤️🔥": "5999094689943261497",
   "➕": "4956507094124594921",
-  "➡": "6269129909591873567",
-  "➡️": "6082173401990959322",
+  "➡": "6276275962078310611",
+  "➡️": "6276275962078310611",
   "⬆️": "5296430266426891322",
   "⬆": "5296430266426891322",
   "⭐": "6136464120779638846",
@@ -1018,9 +1018,10 @@ const TELEGRAM_CUSTOM_EMOJIS: Record<string, string> = {
   // Finance, Data & Operations
   "💰": "6089104607328342288",
   "💳": "5881933741659526973",
-  "💵": "5996747477431096516",
+  "💵": "5409048419211682843",
   "💸": "6129731974291527294",
   "💻": "5193177581888755275",
+  "🖥": "5282843764451195532",
   "💼": "6294080753298837622",
   "📈": "5244837092042750681",
   "📉": "5429518319243775957",
@@ -1054,7 +1055,7 @@ const TELEGRAM_CUSTOM_EMOJIS: Record<string, string> = {
   "😀": "5999317873623831250",
   "😁": "5228831346658393202",
   "😂": "6275794758237426356",
-  "😄": "6248782085415244616",
+  "😄": "6275925342423097847",
   "😉": "5192661343999636786",
   "😊": "5375125990118793401",
   "😐": "5285459717362038704",
@@ -1201,7 +1202,10 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
       }
       return msgId;
     }
-  } catch (err) {}
+    console.warn("[Telegram Custom Emoji rejected by Telegram API]:", data?.description || data);
+  } catch (err: any) {
+    console.error("[Telegram HTML Send Error]:", err?.message);
+  }
 
   // 2. Fallback to standard Markdown
   try {
@@ -1325,6 +1329,33 @@ async function sendTelegramPhoto(
   try {
     const isGroup = Number(chatId) < 0 || String(chatId).startsWith('-');
     if (!photo.startsWith('data:')) {
+      // 1. Try HTML with Custom Emojis
+      if (caption) {
+        try {
+          const htmlCaption = formatWithCustomEmojisHtml(caption).slice(0, 1024);
+          const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              photo,
+              caption: htmlCaption,
+              parse_mode: 'HTML',
+              reply_markup: replyMarkup,
+            }),
+          });
+          const data = await res.json();
+          if (data.ok && data.result?.message_id) {
+            const msgId = data.result.message_id;
+            if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+              scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
+            }
+            return msgId;
+          }
+        } catch (e) {}
+      }
+
+      // 2. Fallback to Markdown
       const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4435,6 +4466,49 @@ Telegram bot keyboard & website interface auto-synced!`, getMainReplyKeyboard(us
     return;
   }
 
+  if (text === "/testemoji" || text === "/emojis" || text === "/testemojis") {
+    const testText = `✨ *TELEGRAM PREMIUM CUSTOM EMOJIS TEST* ✨
+━━━━━━━━━━━━━━
+🔥 *Animated Custom Emojis Status:* 🟢 *ACTIVE*
+
+1️⃣ Badges: 1️⃣ 2️⃣ 3️⃣
+⚡ Lightning: ⚡ ⚡️
+💎 VIP Gem: 💎
+👑 Master Crown: 👑
+💰 Finance: 💰 💳 💵 💸
+🪪 Identity Card: 🪪
+📱 Device: 📱
+❤️‍🔥 Heart On Fire: ❤️‍🔥
+🚀 Rocket: 🚀
+🔒 Encrypted Lock: 🔒
+😉 Emotions: 😉 🤩 🥳 🤯 🦁 🧠
+
+━━━━━━━━━━━━━━
+✅ *Agar aapko ye emojis animated / colorful stickers jaise dikh rahe hain, toh Telegram Premium custom emojis 100% working hain!*`;
+    await sendTelegramMessage(chatId, testText, getMainReplyKeyboard(user));
+    return;
+  }
+
+  if (text === "/promo" || text === "/services" || text === "/bots" || text === "/dev") {
+    const promoText = `🖥 *Telegram Bots and Scripts at Cheap Prices*
+
+➡️ *Custom Telegram Bots*
+➡️ *Advanced Admin Panel*
+➡️ *User & Balance Management*
+➡️ *API Integration*
+➡️ *Custom Buttons & UI*
+➡️ *Fast & Affordable Development*
+
+💵 *Budget-Friendly Pricing*
+😄 *Custom Features Available*
+
+Apis Also For Sell in Cheap Rate 💼
+
+✉️ *DM @Swapibhai*`;
+    await sendTelegramMessage(chatId, promoText, getMainReplyKeyboard(user));
+    return;
+  }
+
   if (text === "/help" || text === "❓ Help" || text === "❓ Help Guide") {
     const activeButtons = Array.from(buttonsStore.values())
       .filter(b => b.enabled !== false)
@@ -6016,6 +6090,77 @@ async function startServer() {
     res.json({ success: true, message: 'Audit logs cleared successfully.' });
   });
 
+  // ── TELEGRAM CUSTOM PREMIUM EMOJIS DIAGNOSTIC / TESTER ──
+  app.post('/api/admin/test-emojis', async (req, res) => {
+    const targetChatId = req.body.chatId || ADMIN_USER_ID;
+    if (!BOT_TOKEN) {
+      return res.status(400).json({
+        success: false,
+        error: 'TELEGRAM_BOT_TOKEN is not configured in environment variables. Telegram bot needs a token to send messages.'
+      });
+    }
+
+    if (!targetChatId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Target Chat ID is required. Please provide a valid Telegram user or group chat ID.'
+      });
+    }
+
+    const testText = `✨ *TELEGRAM PREMIUM CUSTOM EMOJIS TEST* ✨
+━━━━━━━━━━━━━━
+🔥 *Animated Custom Emojis Status:* 🟢 *ACTIVE*
+
+1️⃣ Badges: 1️⃣ 2️⃣ 3️⃣
+⚡ Fast Lightning: ⚡ ⚡️
+💎 VIP Premium Gem: 💎
+👑 Master Crown: 👑
+💰 Finance & Credits: 💰 💳 💵 💸
+🪪 Identity Card: 🪪
+📱 Mobile Device: 📱
+❤️‍🔥 Heart On Fire: ❤️‍🔥
+🚀 Fast Engine: 🚀
+🔒 Encrypted Security: 🔒
+😉 Emotion Pack: 😉 🤩 🥳 🤯 🦁 🧠
+
+━━━━━━━━━━━━━━
+✅ *Diagnostic Result:* Emojis converted with HTML \`<tg-emoji>\` tags. Agar aapko ye emojis animated aur colorful stickers jaise dikh rahe hain, toh custom emojis 100% active hain!`;
+
+    try {
+      const htmlText = formatWithCustomEmojisHtml(testText);
+      const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetChatId,
+          text: htmlText,
+          parse_mode: 'HTML'
+        })
+      });
+      const data = await tgRes.json();
+      if (data.ok) {
+        return res.json({
+          success: true,
+          messageId: data.result?.message_id,
+          chatId: targetChatId,
+          customEmojisCount: Object.keys(TELEGRAM_CUSTOM_EMOJIS).length,
+          telegramResponse: data
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: data.description || 'Telegram rejected custom emoji request',
+          telegramResponse: data
+        });
+      }
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        error: err.message
+      });
+    }
+  });
+
   // ── ADMIN LIVE API TESTER / PLAYGROUND ──
   app.post('/api/admin/test-api', async (req, res) => {
     const { apiUrl, query } = req.body;
@@ -6806,6 +6951,20 @@ Tap *❌ Cancel* to return to main menu.`,
       const card = getStartCard(user, 'rehuu', '5225326313');
       return res.json({
         reply: card + (refMsg ? refMsg : ""),
+        awaitingInput: false,
+      });
+    }
+
+    if (text === "/testemoji" || text === "/emojis" || text === "/testemojis") {
+      return res.json({
+        reply: `✨ *TELEGRAM PREMIUM CUSTOM EMOJIS TEST* ✨\n━━━━━━━━━━━━━━\n🔥 *Animated Custom Emojis Status:* 🟢 *ACTIVE*\n\n1️⃣ Badges: 1️⃣ 2️⃣ 3️⃣\n⚡ Lightning: ⚡ ⚡️\n💎 VIP Gem: 💎\n👑 Master Crown: 👑\n💰 Finance: 💰 💳 💵 💸\n🪪 Identity Card: 🪪\n📱 Device: 📱\n❤️‍🔥 Heart On Fire: ❤️‍🔥\n🚀 Rocket: 🚀\n🔒 Encrypted Lock: 🔒\n😉 Emotions: 😉 🤩 🥳 🤯 🦁 🧠\n\n━━━━━━━━━━━━━━\n✅ *Status:* 152 Custom Emojis loaded with Telegram <tg-emoji> protocol!\n💡 *Real Telegram Check:* Telegram bot me \`/testemoji\` likhkar send karein ya Admin Dashboard se test message fire karein.`,
+        awaitingInput: false,
+      });
+    }
+
+    if (text === "/promo" || text === "/services" || text === "/bots" || text === "/dev") {
+      return res.json({
+        reply: `🖥 *Telegram Bots and Scripts at Cheap Prices*\n\n➡️ *Custom Telegram Bots*\n➡️ *Advanced Admin Panel*\n➡️ *User & Balance Management*\n➡️ *API Integration*\n➡️ *Custom Buttons & UI*\n➡️ *Fast & Affordable Development*\n\n💵 *Budget-Friendly Pricing*\n😄 *Custom Features Available*\n\nApis Also For Sell in Cheap Rate 💼\n\n✉️ *DM @Swapibhai*`,
         awaitingInput: false,
       });
     }

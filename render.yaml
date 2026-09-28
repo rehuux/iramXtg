@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: iramx-osint-bot
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_USER_ID
+        value: "5225326313"
+      - key: CHANNEL_ID
+        value: "-1002085221963"
+      - key: CHANNEL_URL
+        value: "https://t.me/rehuszr"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
