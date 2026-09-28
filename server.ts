@@ -916,6 +916,257 @@ let isBotActive = true;
 let lastUpdateId = 0;
 const telegramChatIds = new Set<string | number>();
 
+// ── TELEGRAM CUSTOM PREMIUM EMOJIS MAPPING ──
+const TELEGRAM_CUSTOM_EMOJIS: Record<string, string> = {
+  // Keypad & Symbols
+  "1️⃣": "5370704514561093615",
+  "2️⃣": "5381990043642502553",
+  "3️⃣": "5379910025340802255",
+  "‼️": "6269325223229658407",
+  "⌨️": "5819127949558812112",
+  "⌨": "5819127949558812112",
+  "⏰": "4904882772637648609",
+  "⏳": "5451732530048802485",
+  "☀️": "5206659381151680254",
+  "☄️": "5224607267797606837",
+  "☄": "5224607267797606837",
+  "☑️": "5998881947328188290",
+  "☑": "5998881947328188290",
+  "☺️": "5465361436236593352",
+  "⚒": "5796297333637387376",
+  "⚠️": "5377384949642976425",
+  "⚡": "6129805465476929485",
+  "⚡️": "5233727798354397359",
+  "⛓": "6001078118725456537",
+  "✅": "6237651574588445185",
+  "✈️": "5364125616801073577",
+  "✈": "5364125616801073577",
+  "✉️": "5253742260054409879",
+  "✉": "5253742260054409879",
+  "✔️": "6269219060228035378",
+  "✔": "6269219060228035378",
+  "✨": "6026162407066309019",
+  "❌": "5416076321442777828",
+  "❤️": "5348373562249980047",
+  "❤️‍🔥": "5999094689943261497",
+  "❤️🔥": "5999094689943261497",
+  "➕": "4956507094124594921",
+  "➡": "6269129909591873567",
+  "➡️": "6082173401990959322",
+  "⬆️": "5296430266426891322",
+  "⬆": "5296430266426891322",
+  "⭐": "6136464120779638846",
+  "⭐️": "6296504553667823627",
+
+  // Flags & Globes
+  "🇬🇧": "5416093754715034051",
+  "🇮🇩": "5291937150814661333",
+  "🇮🇳": "5222300011366200403",
+  "🇮🇹": "5449723275628259037",
+  "🇵🇰": "5269660289321679111",
+  "🇸🇻": "6208637408351625817",
+  "🇺🇸": "5994357448389958143",
+  "🌍": "5399898266265475100",
+  "🌎": "5224450179368767019",
+  "🌐": "5192825888491720486",
+
+  // Nature, Rewards & Utility
+  "🌷": "5424867354993513047",
+  "🌸": "5366458509892276868",
+  "🌹": "5215637237189855596",
+  "🍬": "4958815926809003450",
+  "🍼": "6129399728506412489",
+  "🎁": "5470041305616759456",
+  "🎉": "5084613633418199991",
+  "🎖": "5170149156953523243",
+  "🎖️": "5170149156953523243",
+  "🎚": "6122690796316529045",
+  "🎥": "5298495913768001287",
+  "🎯": "5350460637182993292",
+  "🏆": "6296235632880521619",
+  "🏠": "5967822972931542886",
+  "🏦": "5332455502917949981",
+  "🏷️": "5958269333577669655",
+  "🏷": "5958269333577669655",
+  "🏹": "5274080935950688944",
+  "🐦": "6235567682226230771",
+
+  // Gestures & People
+  "👀": "6095876155846431752",
+  "👇": "6213208709548480403",
+  "👉": "6053231721917190064",
+  "👋": "5424738780852536370",
+  "👍": "5195362844069085267",
+  "👑": "6269419691035332217",
+  "👤": "5296368079595416108",
+  "👨‍💻": "5206433521706488234",
+  "👨💻": "5206433521706488234",
+  "👩‍💻": "6269458311381258421",
+  "👩💻": "6269458311381258421",
+  "💀": "5796501610871923245",
+  "💌": "5190859184312167965",
+  "💎": "5296504062554973082",
+  "💓": "5956307912207896793",
+  "💙": "6129736771769997767",
+  "💡": "5355014749920709843",
+  "💣": "5469654973308476699",
+  "💥": "5422463281409321295",
+  "💫": "6255705323588290387",
+  "💬": "6217729050958370118",
+  "💯": "6001517283426439371",
+
+  // Finance, Data & Operations
+  "💰": "6089104607328342288",
+  "💳": "5881933741659526973",
+  "💵": "5996747477431096516",
+  "💸": "6129731974291527294",
+  "💻": "5193177581888755275",
+  "💼": "6294080753298837622",
+  "📈": "5244837092042750681",
+  "📉": "5429518319243775957",
+  "📊": "6001546944470587024",
+  "📋": "6129771638314523716",
+  "📌": "5397782960512444700",
+  "📍": "5422758066489679925",
+  "📞": "5283002583751893181",
+  "📢": "5951969256504562067",
+  "📣": "6179070814831251950",
+  "📥": "5443127283898405358",
+  "📦": "6005639597332110711",
+  "📩": "5368554037320900698",
+  "📱": "5244763347454300958",
+  "📸": "6237550015791765281",
+  "🔍": "5258274739041883702",
+  "🔒": "5296369303661067030",
+  "🔔": "6269118781331609137",
+  "🔗": "6129589862413638401",
+  "🔠": "5345788305470410070",
+  "🔢": "5422449357125350081",
+  "🔥": "5332336747072208845",
+  "🕐": "6001162025206550903",
+  "🕛": "6179440452601647526",
+  "🗂": "5798700621242568649",
+  "🗃": "5967456680940671207",
+  "🗿": "6093513636070822132",
+  "🪪": "5204242830687494041",
+
+  // Faces, Expressions & Vehicles
+  "😀": "5999317873623831250",
+  "😁": "5228831346658393202",
+  "😂": "6275794758237426356",
+  "😄": "6248782085415244616",
+  "😉": "5192661343999636786",
+  "😊": "5375125990118793401",
+  "😐": "5285459717362038704",
+  "😒": "5197564530204358227",
+  "😔": "5339112543312952829",
+  "😘": "6334406334384965287",
+  "😡": "5296547970005615321",
+  "😢": "5242363439988358539",
+  "😣": "6334492173601343643",
+  "😬": "6179444318072213740",
+  "😲": "5280662337676653390",
+  "🙏": "5285070644864628879",
+  "🚀": "6129639980387015660",
+  "🚗": "5233638613358486264",
+  "🚨": "5395695537687123235",
+  "🚫": "5226961519761199044",
+  "🛒": "5244487464524992342",
+  "🛠": "5208911683476538418",
+  "🛫": "5411563083908797492",
+  "🟥": "6269407523392983630",
+  "🤍": "5233479016668737654",
+  "🤑": "5312501291019169497",
+  "🤔": "6147625684219993899",
+  "🤖": "5332560480508591604",
+  "🤝": "6264720734820505831",
+  "🤟": "5197155404504642051",
+  "🤡": "5246745015299884197",
+  "🤩": "6129572317472233948",
+  "🤯": "5285503470193884320",
+  "🥳": "5330523175656632877",
+  "🦁": "5999162851074250007",
+  "🦇": "5328303562327861508",
+  "🧠": "5927026418616636353",
+  "🧾": "5204242830687494041",
+  "🩸": "5463258057607760727",
+  "🩺": "5359299744302639114",
+  "🫰": "5303438381743618017",
+  "🫴": "5453957774079706024",
+  "🫶": "6334525760245597578"
+};
+
+function escapeTelegramHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Pre-compiled regex sorted longest key first to prevent sub-matches and tag nesting
+const SORTED_CUSTOM_EMOJI_KEYS = Object.keys(TELEGRAM_CUSTOM_EMOJIS).sort((a, b) => b.length - a.length);
+const CUSTOM_EMOJI_REGEX = new RegExp(
+  SORTED_CUSTOM_EMOJI_KEYS.map(escapeRegExp).join('|'),
+  'g'
+);
+
+function formatWithCustomEmojisHtml(rawText: string): string {
+  if (!rawText) return '';
+
+  // Step 1: Protect pre/code blocks
+  const codeBlocks: string[] = [];
+  let s = rawText.replace(/```([\s\S]*?)```/g, (_, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(`<pre><code>${escapeTelegramHtml(code)}</code></pre>`);
+    return `___PRE_BLOCK_${idx}___`;
+  });
+
+  const inlineCodes: string[] = [];
+  s = s.replace(/`([^`\n]+)`/g, (_, code) => {
+    const idx = inlineCodes.length;
+    inlineCodes.push(`<code>${escapeTelegramHtml(code)}</code>`);
+    return `___INLINE_CODE_${idx}___`;
+  });
+
+  const markdownLinks: string[] = [];
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => {
+    const idx = markdownLinks.length;
+    markdownLinks.push(`<a href="${escapeTelegramHtml(url)}">${escapeTelegramHtml(label)}</a>`);
+    return `___MD_LINK_${idx}___`;
+  });
+
+  // Step 2: Escape HTML in text
+  s = escapeTelegramHtml(s);
+
+  // Step 3: Markdown bold & italic
+  s = s.replace(/\*([^*\n]+)\*/g, '<b>$1</b>');
+  s = s.replace(/(^|[\s.,!?;:()\[\]])_([^_\n]+)_([\s.,!?;:()\[\]]|$)/g, '$1<i>$2</i>$3');
+
+  // Step 4: Single-pass regex replacement for custom emojis (clean, never nests tags)
+  s = s.replace(CUSTOM_EMOJI_REGEX, (matched) => {
+    const emojiId = TELEGRAM_CUSTOM_EMOJIS[matched];
+    if (!emojiId) return matched;
+    return `<tg-emoji emoji-id="${emojiId}">${matched}</tg-emoji>`;
+  });
+
+  // Step 5: Restore links, inline codes, and code blocks
+  markdownLinks.forEach((link, idx) => {
+    s = s.replace(`___MD_LINK_${idx}___`, link);
+  });
+  inlineCodes.forEach((code, idx) => {
+    s = s.replace(`___INLINE_CODE_${idx}___`, code);
+  });
+  codeBlocks.forEach((block, idx) => {
+    s = s.replace(`___PRE_BLOCK_${idx}___`, block);
+  });
+
+  return s;
+}
+
 async function sendTelegramMessage(chatId: number | string, text: string, replyMarkup?: any): Promise<number | null> {
   if (chatId) telegramChatIds.add(chatId);
   if (!BOT_TOKEN) return null;
@@ -927,6 +1178,32 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
     return await sendTelegramDocument(chatId, filename, text, caption, replyMarkup);
   }
 
+  const isGroup = Number(chatId) < 0 || String(chatId).startsWith('-');
+
+  // 1. Try sending with HTML and Telegram Premium Custom Emojis (<tg-emoji>)
+  try {
+    const htmlText = formatWithCustomEmojisHtml(text);
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: htmlText,
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup,
+      })
+    });
+    const data = await res.json();
+    if (data.ok && data.result?.message_id) {
+      const msgId = data.result.message_id;
+      if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+        scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
+      }
+      return msgId;
+    }
+  } catch (err) {}
+
+  // 2. Fallback to standard Markdown
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
@@ -941,42 +1218,34 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
     const data = await res.json();
     if (data.ok && data.result?.message_id) {
       const msgId = data.result.message_id;
-      const isGroup = Number(chatId) < 0 || String(chatId).startsWith('-');
       if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
         scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
       }
       return msgId;
     }
-    // Fallback if markdown parsing fails
-    if (!data.ok && data.description?.includes('entity')) {
-      const plainRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: text.replace(/[*_`[\]()]/g, ''),
-          reply_markup: replyMarkup,
-        })
-      });
-      const plainData = await plainRes.json();
-      if (plainData.ok && plainData.result?.message_id) {
-        const msgId = plainData.result.message_id;
-        const isGroup = Number(chatId) < 0 || String(chatId).startsWith('-');
-        if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
-          scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
-        }
-        return msgId;
+  } catch (err: any) {}
+
+  // 3. Fallback to plain text
+  try {
+    const plainRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: text.replace(/[*_`[\]()]/g, ''),
+        reply_markup: replyMarkup,
+      })
+    });
+    const plainData = await plainRes.json();
+    if (plainData.ok && plainData.result?.message_id) {
+      const msgId = plainData.result.message_id;
+      if (isGroup && AUTO_DELETE_DELAY_MS > 0) {
+        scheduleAutoDelete(chatId, [msgId], AUTO_DELETE_DELAY_MS);
       }
+      return msgId;
     }
-    // Fallback if message too long according to Telegram
-    if (!data.ok && data.description?.toLowerCase().includes('too long')) {
-      const filename = `lookup_result_${Date.now()}.txt`;
-      const caption = `📄 *Result is large — Full output attached in .txt file.*`;
-      return await sendTelegramDocument(chatId, filename, text, caption, replyMarkup);
-    }
-  } catch (err: any) {
-    console.error("Telegram send error:", err.message);
-  }
+  } catch (err: any) {}
+
   return null;
 }
 
@@ -1202,8 +1471,27 @@ function scheduleAutoDelete(chatId: number | string, messageIds: (number | null 
 
 async function editTelegramMessageText(chatId: number | string, messageId: number, text: string, replyMarkup?: any) {
   if (!BOT_TOKEN) return;
+  // 1. Try HTML with Telegram Premium Custom Emojis (<tg-emoji>)
   try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+    const htmlText = formatWithCustomEmojisHtml(text);
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text: htmlText,
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup,
+      })
+    });
+    const data = await res.json();
+    if (data.ok) return;
+  } catch (err: any) {}
+
+  // 2. Fallback to Markdown
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1214,9 +1502,23 @@ async function editTelegramMessageText(chatId: number | string, messageId: numbe
         reply_markup: replyMarkup,
       })
     });
-  } catch (err: any) {
-    console.error("Telegram editMessageText error:", err.message);
-  }
+    const data = await res.json();
+    if (data.ok) return;
+  } catch (err: any) {}
+
+  // 3. Fallback to plain text
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text: text.replace(/[*_`[\]()]/g, ''),
+        reply_markup: replyMarkup,
+      })
+    });
+  } catch (err: any) {}
 }
 
 async function broadcastTelegramMessage(
@@ -2239,23 +2541,30 @@ function getStartCard(user: any, firstName = 'Agent', userId: number | string = 
     ? activeButtons.map(b => b.label).slice(0, 8).join('  •  ')
     : 'No active services';
 
-  return `🌐 *${BOT_NAME} Intelligence*
-━━━━━━━━━━━━━━━━━━━━━━━━━
-👋 Welcome, *${firstName}*!
+  return `✨ *${BOT_NAME.toUpperCase()} OSINT BOT* ✨
+━━━━━━━━━━━━━━
+🔥 *Features & Services:*
+→ 📱 Easy & Simple Process
+→ ⚡ Fast Multi-Node OSINT Engine
+→ 💰 Daily Free Credits & Referrals
+→ 🪪 Identity, Documents & Phone Lookups
+→ 🔒 100% Encrypted & Anonymous
 
-🆔 *Agent ID:* \`${userId}\`
-🎖️ *Membership:* 💎 \`${user.role.toUpperCase()}\`
+👋 Welcome, *${firstName}*!
+👤 *Agent ID:* \`${userId}\`
+👑 *Membership:* 💎 \`${user.role.toUpperCase()}\`
 📢 *Channel Status:* ✅ \`VERIFIED\` (@${CHANNEL_USERNAME.replace('@', '')})
 ⚡ *Server Node:* 🟢 \`ONLINE & OPERATIONAL\`
 🔥 *Daily Quota:* \`${remaining} / ${currentLimit}\` searches today
 👥 *Referral Bonus:* \`+${refBonus} daily credits\` (${refCount} invites)
 
-⚡ *Available Lookups:*
+⚡ *Active Modules:*
 ${lookupsSummary}
 
-💡 *Refer & Earn:* Send /refer to earn +10 searches/day per friend
-━━━━━━━━━━━━━━━━━━━━━━━━━
-👇 Tap an option below to start your investigation:`;
+😉 *Quick Flow:* Start → Choose Module → Enter Query → Get Results
+💰 *Earn Credits:* Send /refer to earn +10 searches/day per friend
+━━━━━━━━━━━━━━
+👇 Select an intelligence module from the keyboard below:`;
 }
 
 async function runTelegramPoller() {
@@ -5476,7 +5785,7 @@ async function startServer() {
     usersStore.delete(String(userId));
     if (supabase) {
       try {
-        await supabase.from('bot_users').delete().eq('user_id', String(userId));
+        await supabase.from('bot_users').delete().or(`id.eq.${userId},user_id.eq.${userId}`);
       } catch (e: any) {
         console.warn(`[Supabase] Could not delete user ${userId}:`, e.message);
       }

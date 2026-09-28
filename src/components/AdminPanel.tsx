@@ -593,7 +593,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ stats, config, onRefresh
 
   const sqlCode = `-- =========================================================
 -- COMPLETE SUPABASE SQL SCHEMA FOR IRAMX OSINT TELEGRAM BOT
--- Copy & Run this in your Supabase SQL Editor:
+-- Safe & idempotent script: runs smoothly on new or existing DB
 -- =========================================================
 
 -- 1. Users, Credits & DM Access Table
@@ -617,6 +617,27 @@ CREATE TABLE IF NOT EXISTS bot_users (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Ensure all columns exist even if bot_users was created in an earlier schema
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS user_id TEXT;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS username TEXT;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS first_name TEXT;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'free';
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS daily_searches INT DEFAULT 0;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS total_searches INT DEFAULT 0;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS channel_verified BOOLEAN DEFAULT false;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS referred_by TEXT;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS allow_dm BOOLEAN DEFAULT false;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS last_search_date TEXT;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS last_active TEXT;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS referral_count INT DEFAULT 0;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS referral_bonus_daily INT DEFAULT 0;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS custom_daily_limit INT DEFAULT 0;
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS daily_button_usage JSONB DEFAULT '{}';
+ALTER TABLE IF EXISTS bot_users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+-- Populate user_id from id for existing rows
+UPDATE bot_users SET user_id = id WHERE user_id IS NULL;
+
 -- 2. Dynamic Bot Buttons & Custom APIs Table
 CREATE TABLE IF NOT EXISTS bot_buttons (
   id TEXT PRIMARY KEY,
@@ -632,6 +653,12 @@ CREATE TABLE IF NOT EXISTS bot_buttons (
   daily_limit INT DEFAULT 0,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Ensure bot_buttons columns exist if table was created previously
+ALTER TABLE IF EXISTS bot_buttons ADD COLUMN IF NOT EXISTS is_custom BOOLEAN DEFAULT false;
+ALTER TABLE IF EXISTS bot_buttons ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 99;
+ALTER TABLE IF EXISTS bot_buttons ADD COLUMN IF NOT EXISTS daily_limit INT DEFAULT 0;
+ALTER TABLE IF EXISTS bot_buttons ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT true;
 
 -- 3. Deleted Buttons Tracking Table (Ensures deleted buttons stay deleted across restarts)
 CREATE TABLE IF NOT EXISTS bot_deleted_buttons (
@@ -691,7 +718,7 @@ CREATE TABLE IF NOT EXISTS bot_referrals (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Performance Indexes
+-- Performance Indexes (safe)
 CREATE INDEX IF NOT EXISTS idx_bot_users_user_id ON bot_users (user_id);
 CREATE INDEX IF NOT EXISTS idx_bot_buttons_enabled ON bot_buttons (enabled);
 CREATE INDEX IF NOT EXISTS idx_bot_buttons_sort ON bot_buttons (sort_order);
@@ -709,13 +736,29 @@ ALTER TABLE bot_broadcasts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_referrals ENABLE ROW LEVEL SECURITY;
 
+-- Clean drop & recreate policies to avoid duplicate policy errors
+DROP POLICY IF EXISTS "Allow All bot_users" ON bot_users;
 CREATE POLICY "Allow All bot_users" ON bot_users FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Allow All bot_buttons" ON bot_buttons;
 CREATE POLICY "Allow All bot_buttons" ON bot_buttons FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Allow All bot_deleted_buttons" ON bot_deleted_buttons;
 CREATE POLICY "Allow All bot_deleted_buttons" ON bot_deleted_buttons FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Allow All bot_vouchers" ON bot_vouchers;
 CREATE POLICY "Allow All bot_vouchers" ON bot_vouchers FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Allow All bot_search_logs" ON bot_search_logs;
 CREATE POLICY "Allow All bot_search_logs" ON bot_search_logs FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Allow All bot_broadcasts" ON bot_broadcasts;
 CREATE POLICY "Allow All bot_broadcasts" ON bot_broadcasts FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Allow All bot_settings" ON bot_settings;
 CREATE POLICY "Allow All bot_settings" ON bot_settings FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Allow All bot_referrals" ON bot_referrals;
 CREATE POLICY "Allow All bot_referrals" ON bot_referrals FOR ALL USING (true);
 `;
 
