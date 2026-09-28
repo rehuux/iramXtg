@@ -8,17 +8,8 @@ interface Message {
   time: string;
 }
 
-const MessageContent: React.FC<{ text: string }> = ({ text: rawText }) => {
+const MessageContent: React.FC<{ text: string }> = ({ text }) => {
   const [copied, setCopied] = useState(false);
-
-  // Clean any telegram HTML / tg-emoji tags for clean web rendering
-  const text = rawText
-    .replace(/<tg-emoji[^>]*>(.*?)<\/tg-emoji>/gi, '$1')
-    .replace(/<b>(.*?)<\/b>/gi, '*$1*')
-    .replace(/<i>(.*?)<\/i>/gi, '_$1_')
-    .replace(/<code>(.*?)<\/code>/gi, '`$1`')
-    .replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/gi, '```\n$1\n```')
-    .replace(/<a href="([^"]*)">(.*?)<\/a>/gi, '[$2]($1)');
 
   // Check if text has ```json ... ``` or ``` ... ```
   const codeBlockRegex = /```(?:json)?\n([\s\S]*?)\n?```/i;

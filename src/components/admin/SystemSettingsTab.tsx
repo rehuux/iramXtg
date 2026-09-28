@@ -12,9 +12,7 @@ import {
   Sliders,
   ShieldCheck,
   ShieldAlert,
-  ExternalLink,
-  Sparkles,
-  Send
+  ExternalLink
 } from 'lucide-react';
 import type { BotConfig } from '../../types';
 
@@ -34,11 +32,6 @@ export const SystemSettingsTab: React.FC<SystemSettingsTabProps> = ({ config, on
   const [saving, setSaving] = useState<boolean>(false);
   const [restartingBot, setRestartingBot] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  // Emojis testing state
-  const [testEmojiChatId, setTestEmojiChatId] = useState<string>('5225326313');
-  const [testingEmojis, setTestingEmojis] = useState<boolean>(false);
-  const [emojiTestResult, setEmojiTestResult] = useState<{ success: boolean; message: string; details?: any } | null>(null);
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -78,43 +71,6 @@ export const SystemSettingsTab: React.FC<SystemSettingsTabProps> = ({ config, on
       setFeedback({ type: 'error', text: e.message || 'Error communicating with bot daemon.' });
     } finally {
       setRestartingBot(false);
-    }
-  };
-
-  const handleTestEmojis = async () => {
-    if (!testEmojiChatId.trim()) {
-      setEmojiTestResult({ success: false, message: 'Please enter a valid Telegram Chat ID' });
-      return;
-    }
-    setTestingEmojis(true);
-    setEmojiTestResult(null);
-    try {
-      const res = await fetch('/api/admin/test-emojis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId: testEmojiChatId.trim() })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setEmojiTestResult({
-          success: true,
-          message: `Telegram par test message bhej diya gaya hai! (Message ID: ${data.messageId}). Apne Telegram app me check karein — custom premium emojis animated form me dikhenge!`,
-          details: data
-        });
-      } else {
-        setEmojiTestResult({
-          success: false,
-          message: data.error || 'Failed to send test message to Telegram.',
-          details: data
-        });
-      }
-    } catch (e: any) {
-      setEmojiTestResult({
-        success: false,
-        message: e.message || 'Network error while contacting server.'
-      });
-    } finally {
-      setTestingEmojis(false);
     }
   };
 
@@ -369,88 +325,6 @@ export const SystemSettingsTab: React.FC<SystemSettingsTabProps> = ({ config, on
               />
               <p className="text-[11px] text-slate-500">DM blocked hone par bot user ko ye link deta hai.</p>
             </div>
-          </div>
-        </div>
-
-        {/* Section: Telegram Custom Premium Emojis Diagnostic & Tester */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2 text-white font-semibold text-sm">
-              <Sparkles className="w-4 h-4 text-amber-400" />
-              <span>Telegram Custom Premium Emojis Diagnostic</span>
-            </div>
-            <span className="text-[10px] font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
-              <span>152+ Emojis Active</span>
-            </span>
-          </div>
-
-          <p className="text-xs text-slate-300 leading-relaxed">
-            Aapke bot me 152+ Telegram Premium animated custom emojis (HTML <code className="text-amber-300 font-mono">&lt;tg-emoji&gt;</code>) configure ho chuke hain. Aap yahan apna <strong>Telegram Chat ID</strong> daalkar direct test message bhej sakte hain taaki confirm ho sake ki Telegram app par animated emojis display ho rahe hain ya nahi.
-          </p>
-
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-            <div className="flex-1 space-y-1">
-              <label className="text-[11px] font-medium text-slate-400">Target Telegram Chat ID (User ID ya Group ID):</label>
-              <input
-                type="text"
-                value={testEmojiChatId}
-                onChange={(e) => setTestEmojiChatId(e.target.value)}
-                placeholder="e.g. 5225326313"
-                className="w-full bg-slate-950 border border-slate-700 text-white font-mono text-xs px-3.5 py-2 rounded-xl focus:border-amber-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="sm:self-end">
-              <button
-                type="button"
-                onClick={handleTestEmojis}
-                disabled={testingEmojis}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-bold shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 transition disabled:opacity-50 cursor-pointer"
-              >
-                {testingEmojis ? (
-                  <>
-                    <span className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                    <span>Sending Test...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Send Emoji Test to Telegram</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {emojiTestResult && (
-            <div
-              className={`p-3 rounded-xl text-xs flex items-start gap-2.5 border ${
-                emojiTestResult.success
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                  : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-              }`}
-            >
-              {emojiTestResult.success ? (
-                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
-              ) : (
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-              )}
-              <div className="flex-1 space-y-1">
-                <div className="font-semibold">{emojiTestResult.message}</div>
-                {emojiTestResult.details?.messageId && (
-                  <div className="text-[11px] text-slate-400 font-mono">
-                    Telegram Message ID: #{emojiTestResult.details.messageId} (Chat: {emojiTestResult.details.chatId})
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 text-[11px] text-slate-400 space-y-1">
-            <div className="text-slate-300 font-medium">💡 Testing Tips:</div>
-            <div>• <strong>Method 1:</strong> Telegram me bot ko direct <code className="text-amber-300 font-mono">/testemoji</code> ya <code className="text-amber-300 font-mono">/start</code> bhejein.</div>
-            <div>• <strong>Method 2:</strong> Upar apna Telegram User ID daalkar "Send Emoji Test" button par click karein.</div>
-            <div>• Agar emojis text roop me dikh rahe hain, toh confirm karein ki aapka Telegram app updated hai (Telegram Premium custom emojis support official apps v9.0+ me available hai).</div>
           </div>
         </div>
 
